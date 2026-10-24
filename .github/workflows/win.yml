@@ -69,9 +69,9 @@ jobs:
     steps:
       - name: Prepare directories.
         run: |
-          mkdir D:\TBuild\Libraries
-          echo TBUILD=D:\TBuild>>%GITHUB_ENV%
-          echo LibrariesPath=D:\TBuild\Libraries${{ matrix.arch == 'x64' && '\win64' || '' }}>>%GITHUB_ENV%
+          mkdir %GITHUB_WORKSPACE%\TBuild\Libraries
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries${{ matrix.arch == 'x64' && '\win64' || '' }}>>%GITHUB_ENV%
 
       - name: Get repository name.
         shell: bash
