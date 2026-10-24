@@ -67,40 +67,11 @@ jobs:
         shell: cmd
 
     steps:
-      - name: Maximize build disk space.
-        shell: pwsh
-        run: |
-          Write-Host "Initial free disk space:"
-          Get-PSDrive C, D | Select-Object Name, @{Name="FreeGB";Expression={[math]::round($_.Free/1GB,2)}}
-
-          $pathsToDelete = @(
-            "C:\Program Files (x86)\Android",
-            "C:\Program Files\Microsoft SQL Server",
-            "C:\Program Files\MongoDB",
-            "C:\Program Files\MySQL",
-            "C:\Program Files\R",
-            "C:\ProgramData\Chocolatey\lib",
-            "C:\hostedtoolcache\windows\Java*",
-            "C:\hostedtoolcache\windows\Ruby*",
-            "C:\hostedtoolcache\windows\go*",
-            "C:\hostedtoolcache\windows\stack*"
-          )
-          foreach ($p in $pathsToDelete) {
-            Get-Item $p -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "Removing $($_.FullName)"
-              Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
-            }
-          }
-
-          Write-Host "Disk space after cleanup:"
-          Get-PSDrive C, D | Select-Object Name, @{Name="FreeGB";Expression={[math]::round($_.Free/1GB,2)}}
-
       - name: Prepare directories.
         run: |
-          mkdir %userprofile%\TBuild\Libraries
-          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
-          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
-          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries${{ matrix.arch == 'x64' && '\win64' || '' }}>>%GITHUB_ENV%
+          mkdir D:\TBuild\Libraries
+          echo TBUILD=D:\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=D:\TBuild\Libraries${{ matrix.arch == 'x64' && '\win64' || '' }}>>%GITHUB_ENV%
 
       - name: Get repository name.
         shell: bash
@@ -237,7 +208,9 @@ jobs:
 
       - name: Free up some disk space.
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name '*.cpp' -o -path '*/include/*' -o -path '*/src/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' -o -path '*/src/wallet_engine/*' -o '(' '(' -path '*/tlottie/*' -o -path '*/wallet-engine/*' ')' ! -path '*/target/*' ')' ')' -type f ')' -o '(' -empty ! -path '*/tlottie/*' ! -path '*/wallet-engine/*' ')' ')' -delete
+        run: |
+          echo "Current disk space on D: drive (147GB available):"
+          df -h
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
