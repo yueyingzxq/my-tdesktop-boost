@@ -1,0 +1,60 @@
+name: Auto Sync Upstream Releases
+
+on:
+  schedule:
+    # 每天北京时间中午 12:00 (UTC 04:00) 自动检查一次上游官方更新
+    - cron: '0 4 * * *'
+  workflow_dispatch: # 支持在 GitHub Actions 页面手动一键触发
+
+jobs:
+  sync:
+    name: Check & Sync Upstream
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: feature/speed-boost
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check latest official release
+        id: check_upstream
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/telegramdesktop/tdesktop/releases/latest | jq -r .tag_name)
+          echo "Latest official tag: $LATEST_TAG"
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+          # 检查当前分支是否已经包含该 tag
+          if git merge-base --is-ancestor refs/tags/$LATEST_TAG HEAD 2>/dev/null; then
+            echo "Already up to date with $LATEST_TAG"
+            echo "need_sync=false" >> $GITHUB_OUTPUT
+          else
+            echo "New upstream version found: $LATEST_TAG"
+            echo "need_sync=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync upstream and merge
+        if: steps.check_upstream.outputs.need_sync == 'true'
+        run: |
+          LATEST_TAG="${{ steps.check_upstream.outputs.latest_tag }}"
+          git remote add upstream https://github.com/telegramdesktop/tdesktop.git || true
+          git fetch upstream --tags
+
+          echo "Attempting to merge upstream tag $LATEST_TAG..."
+          if git merge --no-edit $LATEST_TAG; then
+            echo "Merge succeeded! Pushing to feature/speed-boost..."
+            git push origin feature/speed-boost
+          else
+            echo "::warning::Merge conflict detected with upstream $LATEST_TAG. Please resolve manually."
+            git merge --abort
+            exit 1
+          fi
