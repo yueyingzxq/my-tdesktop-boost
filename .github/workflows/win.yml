@@ -50,6 +50,8 @@ jobs:
   windows:
     name: Windows
     runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || ((github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/nightly') && 'depot-windows-latest-16' || 'windows-latest') }}
+    permissions:
+      contents: write
 
     strategy:
       matrix:
@@ -306,10 +308,34 @@ jobs:
           mkdir artifact
           move %OUT%\Telegram.exe artifact/
           move %OUT%\Updater.exe artifact/
+      - name: Package zip.
+        if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
+        shell: powershell
+        run: |
+          Compress-Archive -Path artifact\Telegram.exe, artifact\Updater.exe -DestinationPath artifact\Telegram_x64_qt6.zip -Force
+
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifact\
-          retention-days: 1
+          retention-days: 7
+
+      - name: Publish to GitHub Release.
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/feature/speed-boost' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: latest-boost
+          name: Telegram Desktop Boost (Latest)
+          body: |
+            ## 🚀 Telegram Desktop Boost 自定义加速版
+            * **构建分支**: `${{ github.ref_name }}`
+            * **提交哈希**: `${{ github.sha }}`
+            * **核心优化**:
+              - 并发连接数提升至 16 通道（突破单线程延迟瓶颈，跑满带宽）
+              - 流媒体预取缓冲深度扩展（视频随点随播，杜绝播放转圈卡顿）
+            * **使用方式**: 下载 `Telegram_x64_qt6.zip` 解压到独立文件夹（如 `D:\Telegram_Boost\`），双击 `Telegram.exe` 即可直接使用。
+          files: |
+            artifact/Telegram_x64_qt6.zip
+            artifact/Telegram.exe
