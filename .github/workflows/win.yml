@@ -67,6 +67,19 @@ jobs:
         shell: cmd
 
     steps:
+      - name: Configure Pagefile.
+        uses: al-cheb/configure-pagefile-action@v1.4
+        with:
+          minimum-size: 32GB
+          maximum-size: 32GB
+          disk-root: "D:"
+
+      - name: Verify Pagefile.
+        shell: powershell
+        run: |
+          Get-CimInstance Win32_PageFileSetting | Select-Object Name, InitialSize, MaximumSize
+          Get-CimInstance Win32_OperatingSystem | Select-Object TotalVirtualMemorySize, FreeVirtualMemory, TotalVisibleMemorySize, FreePhysicalMemory
+
       - name: Prepare directories.
         run: |
           mkdir %GITHUB_WORKSPACE%\TBuild\Libraries
