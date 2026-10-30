@@ -43,7 +43,7 @@ jobs:
 
       - name: Notify new upstream release
         if: steps.check_upstream.outputs.need_sync == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const latest = '${{ steps.check_upstream.outputs.latest_tag }}';
