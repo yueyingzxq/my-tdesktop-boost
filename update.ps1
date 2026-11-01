@@ -1,11 +1,11 @@
 ﻿# ===================================================================
-#    Telegram Boost 自动化更新程序
+#    Telegram Boost 自动化极速更新程序
 #    作者: yueyingzxq
 #    仓库: yueyingzxq/my-tdesktop-boost
 # ===================================================================
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$Host.UI.RawUI.WindowTitle = "Telegram Boost 自动更新器"
+$Host.UI.RawUI.WindowTitle = "Telegram Boost 极速自动更新器"
 
 $repo = "yueyingzxq/my-tdesktop-boost"
 $tag = "latest-boost"
@@ -22,10 +22,36 @@ Write-Host ""
 # 启用 TLS 1.2
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# 代理检测与配置 (自动继承系统代理如 v2rayN)
-$proxy = [System.Net.WebRequest]::GetSystemWebProxy()
-$proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+# 代理检测与配置：探测本地常用代理端口（首选 v2rayN 10808 / 10809，备选 Clash 7890）
+$proxyUrl = $null
+$candidatePorts = @(10808, 10809, 7890)
+foreach ($p in $candidatePorts) {
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $connect = $tcp.BeginConnect("127.0.0.1", $p, $null, $null)
+        $wait = $connect.AsyncWaitHandle.WaitOne(150, $false)
+        if ($wait -and $tcp.Connected) {
+            $tcp.EndConnect($connect)
+            $proxyUrl = "http://127.0.0.1:$p"
+            $tcp.Close()
+            break
+        }
+        $tcp.Close()
+    } catch {}
+}
+
+if ($proxyUrl) {
+    Write-Host " [代理加速] 已检测到本地加速代理通道 ($proxyUrl)，开启极速下载！" -ForegroundColor Green
+    $proxy = New-Object System.Net.WebProxy($proxyUrl)
+    $env:HTTP_PROXY = $proxyUrl
+    $env:HTTPS_PROXY = $proxyUrl
+} else {
+    Write-Host " [网络提示] 未检测到本地代理端口，正在使用系统默认网络通道..." -ForegroundColor Yellow
+    $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+    $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+}
 [System.Net.WebRequest]::DefaultWebProxy = $proxy
+Write-Host ""
 
 Write-Host "[步骤 1/5] 正在检查 GitHub 云端最新版本..." -ForegroundColor Cyan
 
@@ -70,8 +96,11 @@ if (-not $release -or -not $release.assets -or $release.assets.Count -eq 0) {
     exit 0
 }
 
-# 优先匹配 zip 包或 exe 文件
-$targetAsset = $release.assets | Where-Object { $_.name -like '*Telegram*.zip' -or $_.name -eq 'Telegram.exe' } | Select-Object -First 1
+# 优先选择高效压缩包 Telegram_x64_qt6.zip (仅约 80MB，速度提升 3 倍)，其次备选单个 exe
+$targetAsset = $release.assets | Where-Object { $_.name -like '*Telegram*.zip' } | Select-Object -First 1
+if (-not $targetAsset) {
+    $targetAsset = $release.assets | Where-Object { $_.name -eq 'Telegram.exe' } | Select-Object -First 1
+}
 
 if (-not $targetAsset) {
     Write-Host "【错误】未在云端 Release 中找到可用的 Telegram 安装文件。" -ForegroundColor Red
@@ -117,50 +146,73 @@ if (-not $needUpdate) {
     }
 }
 
-Write-Host "[步骤 2/5] 正在下载最新加速版 ($remoteSizeMB MB)..." -ForegroundColor Cyan
+Write-Host "[步骤 2/5] 正在极速下载最新加速包 ($remoteSizeMB MB)..." -ForegroundColor Cyan
 
 $tempFile = if ($isZip) { Join-Path $installDir "_download_temp.zip" } else { Join-Path $installDir "_download_temp.exe" }
 if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
 
-$downloadClient = New-Object System.Net.WebClient
-$downloadClient.Proxy = $proxy
-$downloadCompleted = $false
-$lastProgress = -1
+# 优先使用 Windows 内置高吞吐 curl.exe 进行下载（速度比 WebClient 快数倍且带原生传输进度）
+$hasCurl = (Get-Command "curl.exe" -ErrorAction SilentlyContinue) -ne $null
+$downloadSuccess = $false
 
-$registerProgress = {
-    param($s, $e)
-    $percent = $e.ProgressPercentage
-    if ($percent -ne $script:lastProgress -and $percent % 5 -eq 0) {
-        $script:lastProgress = $percent
-        $receivedMB = [Math]::Round($e.BytesReceived / 1MB, 1)
-        $totalMB = [Math]::Round($e.TotalBytesToReceive / 1MB, 1)
-        $barLength = 30
-        $filled = [Math]::Round(($percent / 100) * $barLength)
-        $empty = $barLength - $filled
-        $bar = ("=" * $filled) + (">") + (" " * [Math]::Max(0, $empty - 1))
-        $line = "`r   [$bar] $percent% ($receivedMB MB / $totalMB MB)"
-        Write-Host $line -NoNewline -ForegroundColor Green
+if ($hasCurl) {
+    $curlArgs = @("-L", "--progress-bar", "--fail", "--retry", "3", "--retry-delay", "1")
+    if ($proxyUrl) {
+        $curlArgs += @("-x", $proxyUrl)
+    }
+    $curlArgs += @($downloadUrl, "-o", $tempFile)
+    
+    & curl.exe @curlArgs
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 0)) {
+        $downloadSuccess = $true
     }
 }
 
-$registerCompleted = {
-    param($s, $e)
-    $script:downloadCompleted = $true
-}
-
-Register-ObjectEvent -InputObject $downloadClient -EventName DownloadProgressChanged -Action $registerProgress | Out-Null
-Register-ObjectEvent -InputObject $downloadClient -EventName DownloadFileCompleted -Action $registerCompleted | Out-Null
-
-try {
-    $downloadClient.DownloadFileAsync((New-Object System.Uri($downloadUrl)), $tempFile)
-    while (-not $downloadCompleted) {
-        Start-Sleep -Milliseconds 200
+# 若无 curl 或 curl 失败，使用 WebClient 进行流式保底下载
+if (-not $downloadSuccess) {
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($downloadUrl)
+        $req.Proxy = $proxy
+        $req.UserAgent = "Telegram-Boost-Updater"
+        $req.Timeout = 60000
+        $resp = $req.GetResponse()
+        $totalBytes = $resp.ContentLength
+        $respStream = $resp.GetResponseStream()
+        $fs = New-Object System.IO.FileStream($tempFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        
+        $buffer = New-Object byte[] 65536
+        $totalRead = 0
+        $lastReport = -1
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        
+        while (($read = $respStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $fs.Write($buffer, 0, $read)
+            $totalRead += $read
+            if ($totalBytes -gt 0) {
+                $percent = [int](($totalRead * 100) / $totalBytes)
+                if ($percent -ne $lastReport -and $percent % 5 -eq 0) {
+                    $lastReport = $percent
+                    $mbRead = [Math]::Round($totalRead / 1MB, 1)
+                    $mbTotal = [Math]::Round($totalBytes / 1MB, 1)
+                    $speed = [Math]::Round(($totalRead / 1MB) / [Math]::Max(0.1, $sw.Elapsed.TotalSeconds), 1)
+                    $barLength = 30
+                    $filled = [Math]::Round(($percent / 100) * $barLength)
+                    $empty = $barLength - $filled
+                    $bar = ("=" * $filled) + (">") + (" " * [Math]::Max(0, $empty - 1))
+                    Write-Host "`r   [$bar] $percent% ($mbRead MB / $mbTotal MB - $speed MB/s)" -NoNewline -ForegroundColor Green
+                }
+            }
+        }
+        $fs.Close()
+        $respStream.Close()
+        $resp.Close()
+        $downloadSuccess = $true
+    } catch {
+        Write-Host "`n[错误] 下载失败: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "请确保已启动代理工具 (v2rayN) 并正常连接网络。" -ForegroundColor Yellow
+        Read-Host "按 Enter 退出"
+        exit 1
     }
-} catch {
-    Write-Host "`n[错误] 下载失败: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "请确保已启动代理工具 (v2rayN) 并正常连接网络。" -ForegroundColor Yellow
-    Read-Host "按 Enter 退出"
-    exit 1
 }
 
 Write-Host "`n   [完成] 下载成功！" -ForegroundColor Green
