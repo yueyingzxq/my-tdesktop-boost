@@ -5319,6 +5319,8 @@ void OverlayWidget::handleStreamingUpdate(Streaming::Update &&update) {
 		updatePlaybackState();
 		if (base::take(_ttlDeferredClose)) {
 			close();
+		} else if (_document && _document->isVideoFile()) {
+			moveToNextVideo(1);
 		}
 	});
 }
@@ -7328,6 +7330,8 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 	const auto key = LayoutIndependentKey(e);
 	const auto modifiers = e->modifiers();
 	const auto ctrl = modifiers.testFlag(Qt::ControlModifier);
+	const auto shift = modifiers.testFlag(Qt::ShiftModifier);
+	const auto alt = modifiers.testFlag(Qt::AltModifier);
 	if (_stories) {
 		if (key == Qt::Key_Space && _down != Over::Video) {
 			_stories->togglePaused(!_stories->paused());
@@ -7335,9 +7339,16 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 	} else if (_streamed) {
 		// Ctrl + F for full screen toggle is in eventFilter().
-		const auto toggleFull = (modifiers.testFlag(Qt::AltModifier) || ctrl)
+		const auto toggleFull = (alt || ctrl)
 			&& (key == Qt::Key_Enter || key == Qt::Key_Return);
+		const auto isSpeedUp = (key == Qt::Key_Greater)
+			|| (shift && (key == Qt::Key_Period));
+		const auto isSpeedDown = (key == Qt::Key_Less)
+			|| (shift && (key == Qt::Key_Comma));
 		if (toggleFull) {
+			playbackToggleFullScreen();
+			return;
+		} else if (key == Qt::Key_F && !alt && !ctrl) {
 			playbackToggleFullScreen();
 			return;
 		} else if (key == Qt::Key_K) {
@@ -7356,6 +7367,12 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		} else if (key == Qt::Key_L) {
 			activateControls();
 			seekRelativeTime(kSeekTimeMsLong);
+			return;
+		} else if (isSpeedUp) {
+			adjustPlaybackSpeed(0.25);
+			return;
+		} else if (isSpeedDown) {
+			adjustPlaybackSpeed(-0.25);
 			return;
 		} else if ((key == Qt::Key_Period || key == Qt::Key_Comma)
 			&& _streamed->instance.player().paused()) {
@@ -7398,6 +7415,11 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 			if (key == Qt::Key_Escape) {
 				playbackToggleFullScreen();
 			} else if (ctrl) {
+				if (key == Qt::Key_Left) {
+					moveToNext(-1);
+				} else if (key == Qt::Key_Right) {
+					moveToNext(1);
+				}
 			} else if (key == Qt::Key_0) {
 				activateControls();
 				restartAtSeekPosition(0);
@@ -7443,6 +7465,9 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 			activateControls();
 		}
 		moveToNext(-1);
+	} else if (key == Qt::Key_F && !modifiers.testFlag(Qt::AltModifier) && !ctrl && !_stories) {
+		toggleFullScreen();
+		return;
 	} else if (key == Qt::Key_H && !_stories) {
 		if (_flip & Qt::Horizontal) {
 			_flip &= ~Qt::Horizontal;
@@ -7933,10 +7958,45 @@ bool OverlayWidget::moveToNext(int delta) {
 	return moveToEntity(entityByIndex(newIndex), delta);
 }
 
+bool OverlayWidget::moveToNextVideo(int delta) {
+	if (_stories || !_index) {
+		return false;
+	}
+	for (int i = *_index + delta, step = 0; step < 1000; i += delta, ++step) {
+		const auto entity = entityByIndex(i);
+		if (v::is_null(entity.data) && !entity.item) {
+			break;
+		}
+		if (const auto doc = std::get_if<not_null<DocumentData*>>(&entity.data)) {
+			if ((*doc)->isVideoFile()) {
+				return moveToEntity(entity, delta);
+			}
+		}
+	}
+	return false;
+}
+
+void OverlayWidget::adjustPlaybackSpeed(float64 delta) {
+	if (!_streamed) {
+		return;
+	}
+	const auto current = Core::App().settings().videoPlaybackSpeed();
+	const auto rounded = std::round((current + delta) * 4.0) / 4.0;
+	const auto target = std::clamp(rounded, kSpeedMin, kSpeedMax);
+	if (_streamed->controls) {
+		_streamed->controls->updatePlaybackSpeed(target);
+	} else {
+		playbackControlsSpeedChanged(target);
+	}
+	activateControls();
+	uiShow()->showToast(QString::number(target) + "x");
+}
+
 bool OverlayWidget::moveToEntity(const Entity &entity, int preloadDelta) {
 	if (v::is_null(entity.data) && !entity.item) {
 		return false;
 	}
+	const auto wasFullScreen = _fullScreenVideo;
 	if (const auto item = entity.item) {
 		setContext(ItemContext{
 			item,
@@ -7956,6 +8016,9 @@ bool OverlayWidget::moveToEntity(const Entity &entity, int preloadDelta) {
 		displayDocument(*document);
 	} else {
 		displayDocument(nullptr);
+	}
+	if (wasFullScreen && _streamed && !_fullScreenVideo) {
+		playbackToggleFullScreen();
 	}
 	preloadData(preloadDelta);
 	return true;

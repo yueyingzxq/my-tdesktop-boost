@@ -351,6 +351,8 @@ private:
 	void updateGeometry(bool inMove = false);
 	void updateGeometryToScreen(bool inMove = false);
 	bool moveToNext(int delta);
+	bool moveToNextVideo(int delta);
+	void adjustPlaybackSpeed(float64 delta);
 	void preloadData(int delta);
 
 	void handleScreenChanged(not_null<QScreen*> screen);
