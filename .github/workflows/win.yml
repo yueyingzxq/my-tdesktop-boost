@@ -3,10 +3,8 @@ name: Windows.
 on:
   workflow_dispatch:
   push:
-    # Pushes to the canary branches run only canary.yml, see there.
-    branches-ignore:
-      - public-canary
-      - private-canary
+    branches:
+      - feature/speed-boost
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -44,6 +42,10 @@ on:
       - 'Telegram/Telegram/**'
       - 'Telegram/configure.sh'
       - 'Telegram/Telegram.plist'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
 

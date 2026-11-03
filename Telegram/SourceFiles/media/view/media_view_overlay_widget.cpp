@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "menu/menu_sponsored.h"
 #include "boxes/premium_preview_box.h"
+#include "boxes/share_box.h"
 #include "calls/calls_instance.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
@@ -3605,22 +3606,10 @@ void OverlayWidget::showInFolder() {
 }
 
 void OverlayWidget::forwardMedia() {
-	if (!_session) {
+	if (!_session || !_message || !_message->allowsForward()) {
 		return;
 	}
-	const auto &active = _session->windows();
-	if (active.empty()) {
-		return;
-	}
-	const auto id = (_message && _message->allowsForward())
-		? _message->fullId()
-		: FullMsgId();
-	if (id) {
-		if (!_windowed) {
-			close();
-		}
-		Window::ShowForwardMessagesBox(active.front(), { 1, id });
-	}
+	FastShareMessage(uiShow(), _message, DarkShareBoxStyle());
 }
 
 void OverlayWidget::deleteMedia() {
