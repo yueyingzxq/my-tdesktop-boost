@@ -5518,7 +5518,7 @@ void OverlayWidget::playbackControlsAutoPlayToggled() {
 		_streamed->controls->updateAutoPlayButton();
 	}
 	activateControls();
-	uiShow()->showToast(on ? u"自动播放: 开启"_q : u"自动播放: 关闭"_q);
+	uiShow()->showToast(on ? u"Autoplay: On"_q : u"Autoplay: Off"_q);
 }
 
 bool OverlayWidget::playbackControlsAutoPlay() {
