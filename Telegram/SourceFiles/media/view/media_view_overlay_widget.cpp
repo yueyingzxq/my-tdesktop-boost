@@ -1594,7 +1594,9 @@ void OverlayWidget::clearStreaming(bool savePosition) {
 			_document,
 			_streamed->instance.player().prepareLegacyState());
 	}
-	_fullScreenVideo = false;
+	if (!_fullScreenVideoRequested) {
+		_fullScreenVideo = false;
+	}
 	_streamed = nullptr;
 }
 
@@ -4748,7 +4750,12 @@ void OverlayWidget::displayDocument(
 		anim::activation activation,
 		const Data::CloudTheme &cloud,
 		const StartStreaming &startStreaming) {
-	_fullScreenVideo = false;
+	if (!_fullScreenVideoRequested || !doc || !doc->isVideoFile()) {
+		_fullScreenVideo = false;
+		_fullScreenVideoRequested = false;
+	} else {
+		_fullScreenVideo = true;
+	}
 	_staticContent = QImage();
 	const auto documentChanged = (_document != doc);
 	clearStreaming(_document != doc);
@@ -4872,6 +4879,11 @@ void OverlayWidget::displayDocument(
 	} else if (!_staticContent.isNull()) {
 		const auto size = style::ConvertScale(
 			flipSizeByRotation(_staticContent.size()));
+		_w = size.width();
+		_h = size.height();
+	} else if (doc && !doc->dimensions.isEmpty()) {
+		const auto size = style::ConvertScale(
+			flipSizeByRotation(doc->dimensions));
 		_w = size.width();
 		_h = size.height();
 	} else if (videoShown()) {
@@ -5243,6 +5255,9 @@ bool OverlayWidget::createStreamingObjects() {
 			_body,
 			static_cast<PlaybackControls::Delegate*>(this));
 		_streamed->controls->show();
+		if (_fullScreenVideo) {
+			_streamed->controls->setInFullScreen(true);
+		}
 		_streamed->sponsored = PlaybackSponsored::Has(_message)
 			? std::make_unique<PlaybackSponsored>(
 				_streamed->controls.get(),
@@ -6028,11 +6043,10 @@ int OverlayWidget::storiesTopNotchSkip() {
 }
 
 void OverlayWidget::playbackToggleFullScreen() {
-	Expects(_streamed != nullptr);
-
-	if (_stories
-		|| !videoShown()
-		|| (!_streamed->controls && !_fullScreenVideo)) {
+	if (_stories) {
+		return;
+	}
+	if (!_fullScreenVideo && (!videoShown() || !_streamed || !_streamed->controls)) {
 		return;
 	}
 	_fullScreenVideo = !_fullScreenVideo;
