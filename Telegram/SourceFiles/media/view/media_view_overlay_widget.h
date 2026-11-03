@@ -260,6 +260,8 @@ private:
 	void playbackControlsFromFullScreen() override;
 	void playbackControlsToPictureInPicture() override;
 	void playbackControlsRotate() override;
+	void playbackControlsAutoPlayToggled() override;
+	[[nodiscard]] bool playbackControlsAutoPlay() override;
 
 	void smtcPlay() override;
 	void smtcPause() override;
@@ -691,6 +693,7 @@ private:
 
 	bool _streamingStartPaused = false;
 	bool _fullScreenVideo = false;
+	bool _fullScreenVideoRequested = false;
 	int _fullScreenZoomCache = 0;
 	float64 _lastPositiveVolume = 1.;
 

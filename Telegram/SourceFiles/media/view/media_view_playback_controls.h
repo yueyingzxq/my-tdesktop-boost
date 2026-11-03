@@ -55,6 +55,8 @@ public:
 		virtual void playbackControlsFromFullScreen() = 0;
 		virtual void playbackControlsToPictureInPicture() = 0;
 		virtual void playbackControlsRotate() = 0;
+		virtual void playbackControlsAutoPlayToggled() = 0;
+		[[nodiscard]] virtual bool playbackControlsAutoPlay() = 0;
 	};
 
 	struct TimestampData {
@@ -74,6 +76,7 @@ public:
 	void setInFullScreen(bool inFullScreen);
 	void updatePlaybackSpeed(float64 speed);
 	void updateSpeedToggleQuality();
+	void updateAutoPlayButton();
 	[[nodiscard]] bool hasTimestamps() const;
 	[[nodiscard]] std::optional<TimestampData> nextTimestamp(
 		float64 progress) const;
@@ -136,6 +139,7 @@ private:
 	object_ptr<Player::SettingsButton> _speedToggle;
 	object_ptr<Ui::IconButton> _fullScreenToggle;
 	object_ptr<Ui::IconButton> _pictureInPicture;
+	object_ptr<Ui::IconButton> _autoPlayToggle;
 	object_ptr<Ui::LabelSimple> _playedAlready;
 	object_ptr<Ui::LabelSimple> _toPlayLeft;
 	object_ptr<Ui::LabelSimple> _downloadProgress = { nullptr };

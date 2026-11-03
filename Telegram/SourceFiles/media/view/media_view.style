@@ -90,6 +90,14 @@ mediaviewFullScreenButton: IconButton(mediaviewPipButton) {
 mediaviewFullScreenOutIcon: icon {{ "player/player_minimize", mediaviewPlaybackIconFg }};
 mediaviewFullScreenOutIconOver: icon {{ "player/player_minimize", mediaviewPlaybackIconFgOver }};
 
+mediaviewAutoPlayButtonSkip: 4px;
+mediaviewAutoPlayButton: IconButton(mediaviewPipButton) {
+	icon: icon {{ "player/player_repeat", mediaviewPlaybackIconFg }};
+	iconOver: icon {{ "player/player_repeat", mediaviewPlaybackIconFgOver }};
+}
+mediaviewAutoPlayIconOn: icon {{ "player/player_repeat", mediaviewPlaybackActive }};
+mediaviewAutoPlayIconOnOver: icon {{ "player/player_repeat", mediaviewPlaybackActiveOver }};
+
 mediaviewVolumeWidth: 75px;
 mediaviewControllerRadius: 9px;
 

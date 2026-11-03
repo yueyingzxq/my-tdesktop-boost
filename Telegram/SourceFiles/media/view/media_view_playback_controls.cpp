@@ -47,6 +47,7 @@ PlaybackControls::PlaybackControls(
 	: nullptr)
 , _fullScreenToggle(this, st::mediaviewFullScreenButton)
 , _pictureInPicture(this, st::mediaviewPipButton)
+, _autoPlayToggle(this, st::mediaviewAutoPlayButton)
 , _playedAlready(this, st::mediaviewPlayProgressLabel)
 , _toPlayLeft(this, st::mediaviewPlayProgressLabel)
 , _speedController(_speedToggle
@@ -91,6 +92,11 @@ PlaybackControls::PlaybackControls(
 	_pictureInPicture->addClickHandler([=] {
 		_delegate->playbackControlsToPictureInPicture();
 	});
+	_autoPlayToggle->addClickHandler([=] {
+		_delegate->playbackControlsAutoPlayToggled();
+		updateAutoPlayButton();
+	});
+	updateAutoPlayButton();
 
 	_volumeController->setValue(_delegate->playbackControlsCurrentVolume());
 	_volumeController->setChangeProgressCallback([=](float64 value) {
@@ -228,6 +234,14 @@ void PlaybackControls::saveSpeed(float64 speed) {
 void PlaybackControls::saveQuality(Media::VideoQuality quality) {
 	_speedToggle->setQuality(quality);
 	_delegate->playbackControlsQualityChanged(quality);
+}
+
+void PlaybackControls::updateAutoPlayButton() {
+	const auto on = _delegate->playbackControlsAutoPlay();
+	_autoPlayToggle->setIconOverride(
+		on ? &st::mediaviewAutoPlayIconOn : nullptr,
+		on ? &st::mediaviewAutoPlayIconOnOver : nullptr);
+	_autoPlayToggle->setOpacity(on ? 1.0 : 0.5);
 }
 
 void PlaybackControls::updateSpeedToggleQuality() {
@@ -496,6 +510,8 @@ void PlaybackControls::resizeEvent(QResizeEvent *e) {
 	_pictureInPicture->moveToRight(right, st::mediaviewButtonsTop);
 	right += _pictureInPicture->width() + st::mediaviewFullScreenButtonSkip;
 	_fullScreenToggle->moveToRight(right, st::mediaviewButtonsTop);
+	right += _fullScreenToggle->width() + st::mediaviewAutoPlayButtonSkip;
+	_autoPlayToggle->moveToRight(right, st::mediaviewButtonsTop);
 
 	updateDownloadProgressPosition();
 
