@@ -1,316 +1,265 @@
-<# :
 @echo off
 setlocal
 chcp 65001 >nul
 title Telegram Boost 一键极速更新工具
 cd /d "%~dp0"
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$c = [System.IO.File]::ReadAllText('%~f0', [System.Text.Encoding]::UTF8); Invoke-Expression -Command $c"
+if not exist "%~dp0update.ps1" (
+    echo [准备] 正在初始化极速更新环境...
+    powershell.exe -NoProfile -Command "[System.IO.File]::WriteAllBytes('%~dp0update.ps1', [System.Convert]::FromBase64String((Get-Content -LiteralPath '%~f0' | Where-Object { $_ -like '::B64::*' } | ForEach-Object { $_.Substring(7) }) -join ''))"
+)
+
+if not exist "%~dp0update.ps1" (
+    echo.
+    echo ======================================================
+    echo [错误] 解压更新引擎失败，请确保当前目录拥有写入权限。
+    echo ======================================================
+    echo.
+    pause
+    exit /b 1
+)
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
 set "PS_EXIT=%ERRORLEVEL%"
 
 if %PS_EXIT% neq 0 (
     echo.
     echo ======================================================
-    echo [提示] 更新过程返回异常代码: %PS_EXIT%
-    echo 如果遇到网络问题，请确认代理软件（如 v2rayN）已启动。
+    echo [提示] 更新过程返回代码: %PS_EXIT%
+    echo 如果遇到网络连接问题，请确认代理软件（如 v2rayN）已启动。
     echo ======================================================
     echo.
     pause
 )
 exit /b %PS_EXIT%
-#>
-# ===================================================================
-#    Telegram Boost 自动化极速更新程序
-#    作者: yueyingzxq
-#    仓库: yueyingzxq/my-tdesktop-boost
-# ===================================================================
 
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$Host.UI.RawUI.WindowTitle = "Telegram Boost 极速自动更新器"
-
-$repo = "yueyingzxq/my-tdesktop-boost"
-$tag = "latest-boost"
-$installDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host "               Telegram Boost 一键极速更新工具                    " -ForegroundColor Green
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host " 仓库地址: https://github.com/$repo" -ForegroundColor Gray
-Write-Host " 当前目录: $installDir" -ForegroundColor Gray
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host ""
-
-# 启用 TLS 1.2
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-# 代理检测与配置：探测本地常用代理端口（首选 v2rayN 10808 / 10809，备选 Clash 7890）
-$proxyUrl = $null
-$candidatePorts = @(10808, 10809, 7890)
-foreach ($p in $candidatePorts) {
-    try {
-        $tcp = New-Object System.Net.Sockets.TcpClient
-        $connect = $tcp.BeginConnect("127.0.0.1", $p, $null, $null)
-        $wait = $connect.AsyncWaitHandle.WaitOne(150, $false)
-        if ($wait -and $tcp.Connected) {
-            $tcp.EndConnect($connect)
-            $proxyUrl = "http://127.0.0.1:$p"
-            $tcp.Close()
-            break
-        }
-        $tcp.Close()
-    } catch {}
-}
-
-if ($proxyUrl) {
-    Write-Host " [代理加速] 已检测到本地加速代理通道 ($proxyUrl)，开启极速下载！" -ForegroundColor Green
-    $proxy = New-Object System.Net.WebProxy($proxyUrl)
-    $env:HTTP_PROXY = $proxyUrl
-    $env:HTTPS_PROXY = $proxyUrl
-} else {
-    Write-Host " [网络提示] 未检测到本地代理端口，正在使用系统默认网络通道..." -ForegroundColor Yellow
-    $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
-    $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
-}
-[System.Net.WebRequest]::DefaultWebProxy = $proxy
-Write-Host ""
-
-Write-Host "[步骤 1/5] 正在检查 GitHub 云端最新版本..." -ForegroundColor Cyan
-
-$release = $null
-$apiUrl = "https://api.github.com/repos/$repo/releases/tags/$tag"
-$apiUrlLatest = "https://api.github.com/repos/$repo/releases/latest"
-
-try {
-    $wc = New-Object System.Net.WebClient
-    $wc.Proxy = $proxy
-    $wc.Headers.Add("User-Agent", "Telegram-Boost-Updater")
-    $json = $wc.DownloadString($apiUrl)
-    $release = $json | ConvertFrom-Json
-} catch {
-    # 尝试 latest 接口
-    try {
-        $wc2 = New-Object System.Net.WebClient
-        $wc2.Proxy = $proxy
-        $wc2.Headers.Add("User-Agent", "Telegram-Boost-Updater")
-        $json = $wc2.DownloadString($apiUrlLatest)
-        $release = $json | ConvertFrom-Json
-    } catch {
-        Write-Host ""
-        Write-Host "------------------------------------------------------------------" -ForegroundColor Yellow
-        Write-Host "【提示】云端 Actions 正在打包编译中，暂未发布 Release 安装包。" -ForegroundColor Yellow
-        Write-Host "       首次云端编译通常需要约 35 分钟。" -ForegroundColor Gray
-        Write-Host "       您可以前往以下网址查看编译进度:" -ForegroundColor Gray
-        Write-Host "       https://github.com/$repo/actions" -ForegroundColor Cyan
-        Write-Host "       编译发布完成后，直接再次双击本脚本即可自动极速更新！" -ForegroundColor Yellow
-        Write-Host "------------------------------------------------------------------" -ForegroundColor Yellow
-        Write-Host ""
-        Read-Host "按 Enter 回车键退出"
-        exit 0
-    }
-}
-
-if (-not $release -or -not $release.assets -or $release.assets.Count -eq 0) {
-    Write-Host ""
-    Write-Host "【提示】云端 Release 正在上传资产中，请稍候 2~3 分钟再试！" -ForegroundColor Yellow
-    Write-Host ""
-    Read-Host "按 Enter 回车键退出"
-    exit 0
-}
-
-# 优先选择高效压缩包 Telegram_x64_qt6.zip (仅约 80MB，速度提升 3 倍)，其次备选单个 exe
-$targetAsset = $release.assets | Where-Object { $_.name -like '*Telegram*.zip' } | Select-Object -First 1
-if (-not $targetAsset) {
-    $targetAsset = $release.assets | Where-Object { $_.name -eq 'Telegram.exe' } | Select-Object -First 1
-}
-
-if (-not $targetAsset) {
-    Write-Host "【错误】未在云端 Release 中找到可用的 Telegram 安装文件。" -ForegroundColor Red
-    Read-Host "按 Enter 回车键退出"
-    exit 1
-}
-
-$downloadUrl = $targetAsset.browser_download_url
-$remoteSize = $targetAsset.size
-$remoteSizeMB = [Math]::Round($remoteSize / 1MB, 2)
-$remoteDate = [DateTime]::Parse($targetAsset.updated_at).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
-$isZip = $targetAsset.name.EndsWith(".zip")
-
-Write-Host "   - 最新版本: $($release.name) ($($release.tag_name))" -ForegroundColor Green
-Write-Host "   - 发布文件: $($targetAsset.name) ($remoteSizeMB MB)" -ForegroundColor Gray
-Write-Host "   - 构建时间: $remoteDate" -ForegroundColor Gray
-Write-Host ""
-
-# 版本比对逻辑
-$localExe = Join-Path $installDir "Telegram.exe"
-$versionFile = Join-Path $installDir ".boost_version.json"
-$needUpdate = $true
-
-if (Test-Path $versionFile) {
-    try {
-        $savedVer = Get-Content $versionFile -Raw | ConvertFrom-Json
-        if ($savedVer.asset_id -eq $targetAsset.id) {
-            $needUpdate = $false
-        }
-    } catch {}
-}
-
-if (-not $needUpdate) {
-    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
-    Write-Host "【恭喜】您当前运行的 Telegram Boost 已经是最新版本，无需重复更新！" -ForegroundColor Green
-    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
-    Write-Host ""
-    $choice = Read-Host "是否强制重新下载覆盖？(Y/N, 默认 N)"
-    if ($choice -ne "Y" -and $choice -ne "y") {
-        Write-Host "已取消更新。"
-        Start-Sleep -Seconds 2
-        exit 0
-    }
-}
-
-Write-Host "[步骤 2/5] 正在极速下载最新加速包 ($remoteSizeMB MB)..." -ForegroundColor Cyan
-
-$tempFile = if ($isZip) { Join-Path $installDir "_download_temp.zip" } else { Join-Path $installDir "_download_temp.exe" }
-if (Test-Path $tempFile) { Remove-Item $tempFile -Force }
-
-# 优先使用 Windows 内置高吞吐 curl.exe 进行下载（速度比 WebClient 快数倍且带原生传输进度）
-$hasCurl = (Get-Command "curl.exe" -ErrorAction SilentlyContinue) -ne $null
-$downloadSuccess = $false
-
-if ($hasCurl) {
-    $curlArgs = @("-L", "--progress-bar", "--fail", "--retry", "3", "--retry-delay", "1")
-    if ($proxyUrl) {
-        $curlArgs += @("-x", $proxyUrl)
-    }
-    $curlArgs += @($downloadUrl, "-o", $tempFile)
-    
-    & curl.exe @curlArgs
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $tempFile) -and ((Get-Item $tempFile).Length -gt 0)) {
-        $downloadSuccess = $true
-    }
-}
-
-# 若无 curl 或 curl 失败，使用 WebClient 进行流式保底下载
-if (-not $downloadSuccess) {
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($downloadUrl)
-        $req.Proxy = $proxy
-        $req.UserAgent = "Telegram-Boost-Updater"
-        $req.Timeout = 60000
-        $resp = $req.GetResponse()
-        $totalBytes = $resp.ContentLength
-        $respStream = $resp.GetResponseStream()
-        $fs = New-Object System.IO.FileStream($tempFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        
-        $buffer = New-Object byte[] 65536
-        $totalRead = 0
-        $lastReport = -1
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        
-        while (($read = $respStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            $fs.Write($buffer, 0, $read)
-            $totalRead += $read
-            if ($totalBytes -gt 0) {
-                $percent = [int](($totalRead * 100) / $totalBytes)
-                if ($percent -ne $lastReport -and $percent % 5 -eq 0) {
-                    $lastReport = $percent
-                    $mbRead = [Math]::Round($totalRead / 1MB, 1)
-                    $mbTotal = [Math]::Round($totalBytes / 1MB, 1)
-                    $speed = [Math]::Round(($totalRead / 1MB) / [Math]::Max(0.1, $sw.Elapsed.TotalSeconds), 1)
-                    $barLength = 30
-                    $filled = [Math]::Round(($percent / 100) * $barLength)
-                    $empty = $barLength - $filled
-                    $bar = ("=" * $filled) + (">") + (" " * [Math]::Max(0, $empty - 1))
-                    Write-Host "`r   [$bar] $percent% ($mbRead MB / $mbTotal MB - $speed MB/s)" -NoNewline -ForegroundColor Green
-                }
-            }
-        }
-        $fs.Close()
-        $respStream.Close()
-        $resp.Close()
-        $downloadSuccess = $true
-    } catch {
-        Write-Host "`n[错误] 下载失败: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "请确保已启动代理工具 (v2rayN) 并正常连接网络。" -ForegroundColor Yellow
-        Read-Host "按 Enter 退出"
-        exit 1
-    }
-}
-
-Write-Host "`n   [完成] 下载成功！" -ForegroundColor Green
-Write-Host ""
-
-# 步骤 3: 检查并平稳退出运行中的 Telegram
-Write-Host "[步骤 3/5] 检测 Telegram 运行状态..." -ForegroundColor Cyan
-$runningProcs = Get-Process Telegram -ErrorAction SilentlyContinue
-if ($runningProcs) {
-    Write-Host "   检测到 Telegram 正在运行，正在平稳关闭以替换程序文件..." -ForegroundColor Yellow
-    $runningProcs | Stop-Process -Force
-    $timeout = 10
-    while ((Get-Process Telegram -ErrorAction SilentlyContinue) -and ($timeout -gt 0)) {
-        Start-Sleep -Seconds 1
-        $timeout--
-    }
-    Write-Host "   已成功关闭旧进程。" -ForegroundColor Gray
-} else {
-    Write-Host "   Telegram 未在运行，准备就绪。" -ForegroundColor Gray
-}
-Write-Host ""
-
-# 步骤 4: 替换核心程序文件
-Write-Host "[步骤 4/5] 正在安装并无缝替换主程序..." -ForegroundColor Cyan
-
-if ($isZip) {
-    $extractFolder = Join-Path $installDir "_extract_temp"
-    if (Test-Path $extractFolder) { Remove-Item $extractFolder -Recurse -Force }
-    
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($tempFile, $extractFolder)
-    
-    # 查找提取出来的 Telegram.exe
-    $extractedExe = Get-ChildItem -Path $extractFolder -Recurse -Filter "Telegram.exe" | Select-Object -First 1
-    if ($extractedExe) {
-        Copy-Item -Path $extractedExe.FullName -Destination $localExe -Force
-        Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
-    } else {
-        Write-Host "   [错误] 压缩包内未找到 Telegram.exe！" -ForegroundColor Red
-    }
-    
-    $extractedUpdater = Get-ChildItem -Path $extractFolder -Recurse -Filter "Updater.exe" | Select-Object -First 1
-    if ($extractedUpdater) {
-        Copy-Item -Path $extractedUpdater.FullName -Destination (Join-Path $installDir "Updater.exe") -Force
-        Write-Host "   [更新] Updater.exe 已更新" -ForegroundColor Green
-    }
-    
-    # 清理临时文件
-    Remove-Item $extractFolder -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-} else {
-    Move-Item -Path $tempFile -Destination $localExe -Force
-    Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
-}
-
-# 保存更新记录
-$versionData = @{
-    asset_id = $targetAsset.id
-    name = $release.name
-    tag = $release.tag_name
-    updated_at = $targetAsset.updated_at
-} | ConvertTo-Json
-Set-Content -Path $versionFile -Value $versionData -Encoding UTF8
-
-Write-Host ""
-Write-Host "==================================================================" -ForegroundColor Green
-Write-Host "           【更新成功】Telegram Boost 已成功更新！                " -ForegroundColor Green
-Write-Host "       个人配置、登录凭据和聊天记录（tdata）100% 完整保留。        " -ForegroundColor Green
-Write-Host "==================================================================" -ForegroundColor Green
-Write-Host ""
-
-# 步骤 5: 重启 Telegram
-Write-Host "[步骤 5/5] 正在自动重新启动 Telegram..." -ForegroundColor Cyan
-Start-Process -FilePath $localExe
-Write-Host "   Telegram 已重新启动！" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "本窗口将在 4 秒后自动退出..." -ForegroundColor Gray
-Start-Sleep -Seconds 4
-exit 0
+::B64::77u/IyA9PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09DQojICAgIFRlbGVncmFtIEJvb3N0IOiHquWKqOWMluaegemAn+abtOaW
+::B64::sOeoi+W6jw0KIyAgICDkvZzogIU6IHl1ZXlpbmd6eHENCiMgICAg5LuT5bqTOiB5dWV5aW5nenhx
+::B64::L215LXRkZXNrdG9wLWJvb3N0DQojID09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0NCg0KW0NvbnNvbGVdOjpPdXRwdXRFbmNv
+::B64::ZGluZyA9IFtTeXN0ZW0uVGV4dC5FbmNvZGluZ106OlVURjgNCiRIb3N0LlVJLlJhd1VJLldpbmRv
+::B64::d1RpdGxlID0gIlRlbGVncmFtIEJvb3N0IOaegemAn+iHquWKqOabtOaWsOWZqCINCg0KJHJlcG8g
+::B64::PSAieXVleWluZ3p4cS9teS10ZGVza3RvcC1ib29zdCINCiR0YWcgPSAibGF0ZXN0LWJvb3N0Ig0K
+::B64::JGluc3RhbGxEaXIgPSAkUFNTY3JpcHRSb290DQoNCldyaXRlLUhvc3QgIj09PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PSIgLUZv
+::B64::cmVncm91bmRDb2xvciBDeWFuDQpXcml0ZS1Ib3N0ICIgICAgICAgICAgICAgICBUZWxlZ3JhbSBC
+::B64::b29zdCDkuIDplK7mnoHpgJ/mm7TmlrDlt6XlhbcgICAgICAgICAgICAgICAgICAgICIgLUZvcmVn
+::B64::cm91bmRDb2xvciBHcmVlbg0KV3JpdGUtSG9zdCAiPT09PT09PT09PT09PT09PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09IiAtRm9yZWdyb3VuZENvbG9y
+::B64::IEN5YW4NCldyaXRlLUhvc3QgIiDku5PlupPlnLDlnYA6IGh0dHBzOi8vZ2l0aHViLmNvbS8kcmVw
+::B64::byIgLUZvcmVncm91bmRDb2xvciBHcmF5DQpXcml0ZS1Ib3N0ICIg5b2T5YmN55uu5b2VOiAkaW5z
+::B64::dGFsbERpciIgLUZvcmVncm91bmRDb2xvciBHcmF5DQpXcml0ZS1Ib3N0ICI9PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0iIC1G
+::B64::b3JlZ3JvdW5kQ29sb3IgQ3lhbg0KV3JpdGUtSG9zdCAiIg0KDQojIOWQr+eUqCBUTFMgMS4yDQpb
+::B64::TmV0LlNlcnZpY2VQb2ludE1hbmFnZXJdOjpTZWN1cml0eVByb3RvY29sID0gW05ldC5TZWN1cml0
+::B64::eVByb3RvY29sVHlwZV06OlRsczEyDQoNCiMg5Luj55CG5qOA5rWL5LiO6YWN572u77ya5o6i5rWL
+::B64::5pys5Zyw5bi455So5Luj55CG56uv5Y+j77yI6aaW6YCJIHYycmF5TiAxMDgwOCAvIDEwODA577yM
+::B64::5aSH6YCJIENsYXNoIDc4OTDvvIkNCiRwcm94eVVybCA9ICRudWxsDQokY2FuZGlkYXRlUG9ydHMg
+::B64::PSBAKDEwODA4LCAxMDgwOSwgNzg5MCkNCmZvcmVhY2ggKCRwIGluICRjYW5kaWRhdGVQb3J0cykg
+::B64::ew0KICAgIHRyeSB7DQogICAgICAgICR0Y3AgPSBOZXctT2JqZWN0IFN5c3RlbS5OZXQuU29ja2V0
+::B64::cy5UY3BDbGllbnQNCiAgICAgICAgJGNvbm5lY3QgPSAkdGNwLkJlZ2luQ29ubmVjdCgiMTI3LjAu
+::B64::MC4xIiwgJHAsICRudWxsLCAkbnVsbCkNCiAgICAgICAgJHdhaXQgPSAkY29ubmVjdC5Bc3luY1dh
+::B64::aXRIYW5kbGUuV2FpdE9uZSgxNTAsICRmYWxzZSkNCiAgICAgICAgaWYgKCR3YWl0IC1hbmQgJHRj
+::B64::cC5Db25uZWN0ZWQpIHsNCiAgICAgICAgICAgICR0Y3AuRW5kQ29ubmVjdCgkY29ubmVjdCkNCiAg
+::B64::ICAgICAgICAgICRwcm94eVVybCA9ICJodHRwOi8vMTI3LjAuMC4xOiRwIg0KICAgICAgICAgICAg
+::B64::JHRjcC5DbG9zZSgpDQogICAgICAgICAgICBicmVhaw0KICAgICAgICB9DQogICAgICAgICR0Y3Au
+::B64::Q2xvc2UoKQ0KICAgIH0gY2F0Y2gge30NCn0NCg0KaWYgKCRwcm94eVVybCkgew0KICAgIFdyaXRl
+::B64::LUhvc3QgIiBb5Luj55CG5Yqg6YCfXSDlt7Lmo4DmtYvliLDmnKzlnLDliqDpgJ/ku6PnkIbpgJrp
+::B64::gZMgKCRwcm94eVVybCnvvIzlvIDlkK/mnoHpgJ/kuIvovb3vvIEiIC1Gb3JlZ3JvdW5kQ29sb3Ig
+::B64::R3JlZW4NCiAgICAkcHJveHkgPSBOZXctT2JqZWN0IFN5c3RlbS5OZXQuV2ViUHJveHkoJHByb3h5
+::B64::VXJsKQ0KICAgICRlbnY6SFRUUF9QUk9YWSA9ICRwcm94eVVybA0KICAgICRlbnY6SFRUUFNfUFJP
+::B64::WFkgPSAkcHJveHlVcmwNCn0gZWxzZSB7DQogICAgV3JpdGUtSG9zdCAiIFvnvZHnu5zmj5DnpLpd
+::B64::IOacquajgOa1i+WIsOacrOWcsOS7o+eQhuerr+WPo++8jOato+WcqOS9v+eUqOezu+e7n+m7mOiu
+::B64::pOe9kee7nOmAmumBky4uLiIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cNCiAgICAkcHJveHkgPSBb
+::B64::U3lzdGVtLk5ldC5XZWJSZXF1ZXN0XTo6R2V0U3lzdGVtV2ViUHJveHkoKQ0KICAgICRwcm94eS5D
+::B64::cmVkZW50aWFscyA9IFtTeXN0ZW0uTmV0LkNyZWRlbnRpYWxDYWNoZV06OkRlZmF1bHRDcmVkZW50
+::B64::aWFscw0KfQ0KW1N5c3RlbS5OZXQuV2ViUmVxdWVzdF06OkRlZmF1bHRXZWJQcm94eSA9ICRwcm94
+::B64::eQ0KV3JpdGUtSG9zdCAiIg0KDQpXcml0ZS1Ib3N0ICJb5q2l6aqkIDEvNV0g5q2j5Zyo5qOA5p+l
+::B64::IEdpdEh1YiDkupHnq6/mnIDmlrDniYjmnKwuLi4iIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KDQok
+::B64::cmVsZWFzZSA9ICRudWxsDQokYXBpVXJsID0gImh0dHBzOi8vYXBpLmdpdGh1Yi5jb20vcmVwb3Mv
+::B64::JHJlcG8vcmVsZWFzZXMvdGFncy8kdGFnIg0KJGFwaVVybExhdGVzdCA9ICJodHRwczovL2FwaS5n
+::B64::aXRodWIuY29tL3JlcG9zLyRyZXBvL3JlbGVhc2VzL2xhdGVzdCINCg0KdHJ5IHsNCiAgICAkd2Mg
+::B64::PSBOZXctT2JqZWN0IFN5c3RlbS5OZXQuV2ViQ2xpZW50DQogICAgJHdjLlByb3h5ID0gJHByb3h5
+::B64::DQogICAgJHdjLkhlYWRlcnMuQWRkKCJVc2VyLUFnZW50IiwgIlRlbGVncmFtLUJvb3N0LVVwZGF0
+::B64::ZXIiKQ0KICAgICRqc29uID0gJHdjLkRvd25sb2FkU3RyaW5nKCRhcGlVcmwpDQogICAgJHJlbGVh
+::B64::c2UgPSAkanNvbiB8IENvbnZlcnRGcm9tLUpzb24NCn0gY2F0Y2ggew0KICAgICMg5bCd6K+VIGxh
+::B64::dGVzdCDmjqXlj6MNCiAgICB0cnkgew0KICAgICAgICAkd2MyID0gTmV3LU9iamVjdCBTeXN0ZW0u
+::B64::TmV0LldlYkNsaWVudA0KICAgICAgICAkd2MyLlByb3h5ID0gJHByb3h5DQogICAgICAgICR3YzIu
+::B64::SGVhZGVycy5BZGQoIlVzZXItQWdlbnQiLCAiVGVsZWdyYW0tQm9vc3QtVXBkYXRlciIpDQogICAg
+::B64::ICAgICRqc29uID0gJHdjMi5Eb3dubG9hZFN0cmluZygkYXBpVXJsTGF0ZXN0KQ0KICAgICAgICAk
+::B64::cmVsZWFzZSA9ICRqc29uIHwgQ29udmVydEZyb20tSnNvbg0KICAgIH0gY2F0Y2ggew0KICAgICAg
+::B64::ICBXcml0ZS1Ib3N0ICIiDQogICAgICAgIFdyaXRlLUhvc3QgIi0tLS0tLS0tLS0tLS0tLS0tLS0t
+::B64::LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSIgLUZvcmVncm91
+::B64::bmRDb2xvciBZZWxsb3cNCiAgICAgICAgV3JpdGUtSG9zdCAi44CQ5o+Q56S644CR5LqR56uvIEFj
+::B64::dGlvbnMg5q2j5Zyo5omT5YyF57yW6K+R5Lit77yM5pqC5pyq5Y+R5biDIFJlbGVhc2Ug5a6J6KOF
+::B64::5YyF44CCIiAtRm9yZWdyb3VuZENvbG9yIFllbGxvdw0KICAgICAgICBXcml0ZS1Ib3N0ICIgICAg
+::B64::ICAg6aaW5qyh5LqR56uv57yW6K+R6YCa5bi46ZyA6KaB57qmIDM1IOWIhumSn+OAgiIgLUZvcmVn
+::B64::cm91bmRDb2xvciBHcmF5DQogICAgICAgIFdyaXRlLUhvc3QgIiAgICAgICDmgqjlj6/ku6XliY3l
+::B64::voDku6XkuIvnvZHlnYDmn6XnnIvnvJbor5Hov5vluqY6IiAtRm9yZWdyb3VuZENvbG9yIEdyYXkN
+::B64::CiAgICAgICAgV3JpdGUtSG9zdCAiICAgICAgIGh0dHBzOi8vZ2l0aHViLmNvbS8kcmVwby9hY3Rp
+::B64::b25zIiAtRm9yZWdyb3VuZENvbG9yIEN5YW4NCiAgICAgICAgV3JpdGUtSG9zdCAiICAgICAgIOe8
+::B64::luivkeWPkeW4g+WujOaIkOWQju+8jOebtOaOpeWGjeasoeWPjOWHu+acrOiEmuacrOWNs+WPr+iH
+::B64::quWKqOaegemAn+abtOaWsO+8gSIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cNCiAgICAgICAgV3Jp
+::B64::dGUtSG9zdCAiLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+::B64::LS0tLS0tLS0tLS0tLS0tLS0tIiAtRm9yZWdyb3VuZENvbG9yIFllbGxvdw0KICAgICAgICBXcml0
+::B64::ZS1Ib3N0ICIiDQogICAgICAgIFJlYWQtSG9zdCAi5oyJIEVudGVyIOWbnui9pumUrumAgOWHuiIN
+::B64::CiAgICAgICAgZXhpdCAwDQogICAgfQ0KfQ0KDQppZiAoLW5vdCAkcmVsZWFzZSAtb3IgLW5vdCAk
+::B64::cmVsZWFzZS5hc3NldHMgLW9yICRyZWxlYXNlLmFzc2V0cy5Db3VudCAtZXEgMCkgew0KICAgIFdy
+::B64::aXRlLUhvc3QgIiINCiAgICBXcml0ZS1Ib3N0ICLjgJDmj5DnpLrjgJHkupHnq68gUmVsZWFzZSDm
+::B64::raPlnKjkuIrkvKDotYTkuqfkuK3vvIzor7fnqI3lgJkgMn4zIOWIhumSn+WGjeivle+8gSIgLUZv
+::B64::cmVncm91bmRDb2xvciBZZWxsb3cNCiAgICBXcml0ZS1Ib3N0ICIiDQogICAgUmVhZC1Ib3N0ICLm
+::B64::jIkgRW50ZXIg5Zue6L2m6ZSu6YCA5Ye6Ig0KICAgIGV4aXQgMA0KfQ0KDQojIOS8mOWFiOmAieaL
+::B64::qemrmOaViOWOi+e8qeWMhSBUZWxlZ3JhbV94NjRfcXQ2LnppcCAo5LuF57qmIDgwTULvvIzpgJ/l
+::B64::uqbmj5DljYcgMyDlgI0p77yM5YW25qyh5aSH6YCJ5Y2V5LiqIGV4ZQ0KJHRhcmdldEFzc2V0ID0g
+::B64::JHJlbGVhc2UuYXNzZXRzIHwgV2hlcmUtT2JqZWN0IHsgJF8ubmFtZSAtbGlrZSAnKlRlbGVncmFt
+::B64::Ki56aXAnIH0gfCBTZWxlY3QtT2JqZWN0IC1GaXJzdCAxDQppZiAoLW5vdCAkdGFyZ2V0QXNzZXQp
+::B64::IHsNCiAgICAkdGFyZ2V0QXNzZXQgPSAkcmVsZWFzZS5hc3NldHMgfCBXaGVyZS1PYmplY3QgeyAk
+::B64::Xy5uYW1lIC1lcSAnVGVsZWdyYW0uZXhlJyB9IHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMQ0KfQ0K
+::B64::DQppZiAoLW5vdCAkdGFyZ2V0QXNzZXQpIHsNCiAgICBXcml0ZS1Ib3N0ICLjgJDplJnor6/jgJHm
+::B64::nKrlnKjkupHnq68gUmVsZWFzZSDkuK3mib7liLDlj6/nlKjnmoQgVGVsZWdyYW0g5a6J6KOF5paH
+::B64::5Lu244CCIiAtRm9yZWdyb3VuZENvbG9yIFJlZA0KICAgIFJlYWQtSG9zdCAi5oyJIEVudGVyIOWb
+::B64::nui9pumUrumAgOWHuiINCiAgICBleGl0IDENCn0NCg0KJGRvd25sb2FkVXJsID0gJHRhcmdldEFz
+::B64::c2V0LmJyb3dzZXJfZG93bmxvYWRfdXJsDQokcmVtb3RlU2l6ZSA9ICR0YXJnZXRBc3NldC5zaXpl
+::B64::DQokcmVtb3RlU2l6ZU1CID0gW01hdGhdOjpSb3VuZCgkcmVtb3RlU2l6ZSAvIDFNQiwgMikNCiRy
+::B64::ZW1vdGVEYXRlID0gW0RhdGVUaW1lXTo6UGFyc2UoJHRhcmdldEFzc2V0LnVwZGF0ZWRfYXQpLlRv
+::B64::TG9jYWxUaW1lKCkuVG9TdHJpbmcoInl5eXktTU0tZGQgSEg6bW06c3MiKQ0KJGlzWmlwID0gJHRh
+::B64::cmdldEFzc2V0Lm5hbWUuRW5kc1dpdGgoIi56aXAiKQ0KDQpXcml0ZS1Ib3N0ICIgICAtIOacgOaW
+::B64::sOeJiOacrDogJCgkcmVsZWFzZS5uYW1lKSAoJCgkcmVsZWFzZS50YWdfbmFtZSkpIiAtRm9yZWdy
+::B64::b3VuZENvbG9yIEdyZWVuDQpXcml0ZS1Ib3N0ICIgICAtIOWPkeW4g+aWh+S7tjogJCgkdGFyZ2V0
+::B64::QXNzZXQubmFtZSkgKCRyZW1vdGVTaXplTUIgTUIpIiAtRm9yZWdyb3VuZENvbG9yIEdyYXkNCldy
+::B64::aXRlLUhvc3QgIiAgIC0g5p6E5bu65pe26Ze0OiAkcmVtb3RlRGF0ZSIgLUZvcmVncm91bmRDb2xv
+::B64::ciBHcmF5DQpXcml0ZS1Ib3N0ICIiDQoNCiMg54mI5pys5q+U5a+56YC76L6RDQokbG9jYWxFeGUg
+::B64::PSBKb2luLVBhdGggJGluc3RhbGxEaXIgIlRlbGVncmFtLmV4ZSINCiR2ZXJzaW9uRmlsZSA9IEpv
+::B64::aW4tUGF0aCAkaW5zdGFsbERpciAiLmJvb3N0X3ZlcnNpb24uanNvbiINCiRuZWVkVXBkYXRlID0g
+::B64::JHRydWUNCg0KaWYgKFRlc3QtUGF0aCAkdmVyc2lvbkZpbGUpIHsNCiAgICB0cnkgew0KICAgICAg
+::B64::ICAkc2F2ZWRWZXIgPSBHZXQtQ29udGVudCAkdmVyc2lvbkZpbGUgLVJhdyB8IENvbnZlcnRGcm9t
+::B64::LUpzb24NCiAgICAgICAgaWYgKCRzYXZlZFZlci5hc3NldF9pZCAtZXEgJHRhcmdldEFzc2V0Lmlk
+::B64::KSB7DQogICAgICAgICAgICAkbmVlZFVwZGF0ZSA9ICRmYWxzZQ0KICAgICAgICB9DQogICAgfSBj
+::B64::YXRjaCB7fQ0KfQ0KDQppZiAoLW5vdCAkbmVlZFVwZGF0ZSkgew0KICAgIFdyaXRlLUhvc3QgIi0t
+::B64::LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+::B64::LS0tLS0tLSIgLUZvcmVncm91bmRDb2xvciBHcmVlbg0KICAgIFdyaXRlLUhvc3QgIuOAkOaBreWW
+::B64::nOOAkeaCqOW9k+WJjei/kOihjOeahCBUZWxlZ3JhbSBCb29zdCDlt7Lnu4/mmK/mnIDmlrDniYjm
+::B64::nKzvvIzml6DpnIDph43lpI3mm7TmlrDvvIEiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4NCiAgICBX
+::B64::cml0ZS1Ib3N0ICItLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+::B64::LS0tLS0tLS0tLS0tLS0tLS0tLS0iIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4NCiAgICBXcml0ZS1I
+::B64::b3N0ICIiDQogICAgJGNob2ljZSA9IFJlYWQtSG9zdCAi5piv5ZCm5by65Yi26YeN5paw5LiL6L29
+::B64::6KaG55uW77yfKFkvTiwg6buY6K6kIE4pIg0KICAgIGlmICgkY2hvaWNlIC1uZSAiWSIgLWFuZCAk
+::B64::Y2hvaWNlIC1uZSAieSIpIHsNCiAgICAgICAgV3JpdGUtSG9zdCAi5bey5Y+W5raI5pu05paw44CC
+::B64::Ig0KICAgICAgICBTdGFydC1TbGVlcCAtU2Vjb25kcyAyDQogICAgICAgIGV4aXQgMA0KICAgIH0N
+::B64::Cn0NCg0KV3JpdGUtSG9zdCAiW+atpemqpCAyLzVdIOato+WcqOaegemAn+S4i+i9veacgOaWsOWK
+::B64::oOmAn+WMhSAoJHJlbW90ZVNpemVNQiBNQikuLi4iIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KDQok
+::B64::dGVtcEZpbGUgPSBpZiAoJGlzWmlwKSB7IEpvaW4tUGF0aCAkaW5zdGFsbERpciAiX2Rvd25sb2Fk
+::B64::X3RlbXAuemlwIiB9IGVsc2UgeyBKb2luLVBhdGggJGluc3RhbGxEaXIgIl9kb3dubG9hZF90ZW1w
+::B64::LmV4ZSIgfQ0KaWYgKFRlc3QtUGF0aCAkdGVtcEZpbGUpIHsgUmVtb3ZlLUl0ZW0gJHRlbXBGaWxl
+::B64::IC1Gb3JjZSB9DQoNCiMg5LyY5YWI5L2/55SoIFdpbmRvd3Mg5YaF572u6auY5ZCe5ZCQIGN1cmwu
+::B64::ZXhlIOi/m+ihjOS4i+i9ve+8iOmAn+W6puavlCBXZWJDbGllbnQg5b+r5pWw5YCN5LiU5bim5Y6f
+::B64::55Sf5Lyg6L6T6L+b5bqm77yJDQokaGFzQ3VybCA9IChHZXQtQ29tbWFuZCAiY3VybC5leGUiIC1F
+::B64::cnJvckFjdGlvbiBTaWxlbnRseUNvbnRpbnVlKSAtbmUgJG51bGwNCiRkb3dubG9hZFN1Y2Nlc3Mg
+::B64::PSAkZmFsc2UNCg0KaWYgKCRoYXNDdXJsKSB7DQogICAgJGN1cmxBcmdzID0gQCgiLUwiLCAiLS1w
+::B64::cm9ncmVzcy1iYXIiLCAiLS1mYWlsIiwgIi0tcmV0cnkiLCAiMyIsICItLXJldHJ5LWRlbGF5Iiwg
+::B64::IjEiKQ0KICAgIGlmICgkcHJveHlVcmwpIHsNCiAgICAgICAgJGN1cmxBcmdzICs9IEAoIi14Iiwg
+::B64::JHByb3h5VXJsKQ0KICAgIH0NCiAgICAkY3VybEFyZ3MgKz0gQCgkZG93bmxvYWRVcmwsICItbyIs
+::B64::ICR0ZW1wRmlsZSkNCiAgICANCiAgICAmIGN1cmwuZXhlIEBjdXJsQXJncw0KICAgIGlmICgkTEFT
+::B64::VEVYSVRDT0RFIC1lcSAwIC1hbmQgKFRlc3QtUGF0aCAkdGVtcEZpbGUpIC1hbmQgKChHZXQtSXRl
+::B64::bSAkdGVtcEZpbGUpLkxlbmd0aCAtZ3QgMCkpIHsNCiAgICAgICAgJGRvd25sb2FkU3VjY2VzcyA9
+::B64::ICR0cnVlDQogICAgfQ0KfQ0KDQojIOiLpeaXoCBjdXJsIOaIliBjdXJsIOWksei0pe+8jOS9v+eU
+::B64::qCBXZWJDbGllbnQg6L+b6KGM5rWB5byP5L+d5bqV5LiL6L29DQppZiAoLW5vdCAkZG93bmxvYWRT
+::B64::dWNjZXNzKSB7DQogICAgdHJ5IHsNCiAgICAgICAgJHJlcSA9IFtTeXN0ZW0uTmV0Lkh0dHBXZWJS
+::B64::ZXF1ZXN0XTo6Q3JlYXRlKCRkb3dubG9hZFVybCkNCiAgICAgICAgJHJlcS5Qcm94eSA9ICRwcm94
+::B64::eQ0KICAgICAgICAkcmVxLlVzZXJBZ2VudCA9ICJUZWxlZ3JhbS1Cb29zdC1VcGRhdGVyIg0KICAg
+::B64::ICAgICAkcmVxLlRpbWVvdXQgPSA2MDAwMA0KICAgICAgICAkcmVzcCA9ICRyZXEuR2V0UmVzcG9u
+::B64::c2UoKQ0KICAgICAgICAkdG90YWxCeXRlcyA9ICRyZXNwLkNvbnRlbnRMZW5ndGgNCiAgICAgICAg
+::B64::JHJlc3BTdHJlYW0gPSAkcmVzcC5HZXRSZXNwb25zZVN0cmVhbSgpDQogICAgICAgICRmcyA9IE5l
+::B64::dy1PYmplY3QgU3lzdGVtLklPLkZpbGVTdHJlYW0oJHRlbXBGaWxlLCBbU3lzdGVtLklPLkZpbGVN
+::B64::b2RlXTo6Q3JlYXRlLCBbU3lzdGVtLklPLkZpbGVBY2Nlc3NdOjpXcml0ZSwgW1N5c3RlbS5JTy5G
+::B64::aWxlU2hhcmVdOjpOb25lKQ0KICAgICAgICANCiAgICAgICAgJGJ1ZmZlciA9IE5ldy1PYmplY3Qg
+::B64::Ynl0ZVtdIDY1NTM2DQogICAgICAgICR0b3RhbFJlYWQgPSAwDQogICAgICAgICRsYXN0UmVwb3J0
+::B64::ID0gLTENCiAgICAgICAgJHN3ID0gW1N5c3RlbS5EaWFnbm9zdGljcy5TdG9wd2F0Y2hdOjpTdGFy
+::B64::dE5ldygpDQogICAgICAgIA0KICAgICAgICB3aGlsZSAoKCRyZWFkID0gJHJlc3BTdHJlYW0uUmVh
+::B64::ZCgkYnVmZmVyLCAwLCAkYnVmZmVyLkxlbmd0aCkpIC1ndCAwKSB7DQogICAgICAgICAgICAkZnMu
+::B64::V3JpdGUoJGJ1ZmZlciwgMCwgJHJlYWQpDQogICAgICAgICAgICAkdG90YWxSZWFkICs9ICRyZWFk
+::B64::DQogICAgICAgICAgICBpZiAoJHRvdGFsQnl0ZXMgLWd0IDApIHsNCiAgICAgICAgICAgICAgICAk
+::B64::cGVyY2VudCA9IFtpbnRdKCgkdG90YWxSZWFkICogMTAwKSAvICR0b3RhbEJ5dGVzKQ0KICAgICAg
+::B64::ICAgICAgICAgIGlmICgkcGVyY2VudCAtbmUgJGxhc3RSZXBvcnQgLWFuZCAkcGVyY2VudCAlIDUg
+::B64::LWVxIDApIHsNCiAgICAgICAgICAgICAgICAgICAgJGxhc3RSZXBvcnQgPSAkcGVyY2VudA0KICAg
+::B64::ICAgICAgICAgICAgICAgICAkbWJSZWFkID0gW01hdGhdOjpSb3VuZCgkdG90YWxSZWFkIC8gMU1C
+::B64::LCAxKQ0KICAgICAgICAgICAgICAgICAgICAkbWJUb3RhbCA9IFtNYXRoXTo6Um91bmQoJHRvdGFs
+::B64::Qnl0ZXMgLyAxTUIsIDEpDQogICAgICAgICAgICAgICAgICAgICRzcGVlZCA9IFtNYXRoXTo6Um91
+::B64::bmQoKCR0b3RhbFJlYWQgLyAxTUIpIC8gW01hdGhdOjpNYXgoMC4xLCAkc3cuRWxhcHNlZC5Ub3Rh
+::B64::bFNlY29uZHMpLCAxKQ0KICAgICAgICAgICAgICAgICAgICAkYmFyTGVuZ3RoID0gMzANCiAgICAg
+::B64::ICAgICAgICAgICAgICAgJGZpbGxlZCA9IFtNYXRoXTo6Um91bmQoKCRwZXJjZW50IC8gMTAwKSAq
+::B64::ICRiYXJMZW5ndGgpDQogICAgICAgICAgICAgICAgICAgICRlbXB0eSA9ICRiYXJMZW5ndGggLSAk
+::B64::ZmlsbGVkDQogICAgICAgICAgICAgICAgICAgICRiYXIgPSAoIj0iICogJGZpbGxlZCkgKyAoIj4i
+::B64::KSArICgiICIgKiBbTWF0aF06Ok1heCgwLCAkZW1wdHkgLSAxKSkNCiAgICAgICAgICAgICAgICAg
+::B64::ICAgV3JpdGUtSG9zdCAiYHIgICBbJGJhcl0gJHBlcmNlbnQlICgkbWJSZWFkIE1CIC8gJG1iVG90
+::B64::YWwgTUIgLSAkc3BlZWQgTUIvcykiIC1Ob05ld2xpbmUgLUZvcmVncm91bmRDb2xvciBHcmVlbg0K
+::B64::ICAgICAgICAgICAgICAgIH0NCiAgICAgICAgICAgIH0NCiAgICAgICAgfQ0KICAgICAgICAkZnMu
+::B64::Q2xvc2UoKQ0KICAgICAgICAkcmVzcFN0cmVhbS5DbG9zZSgpDQogICAgICAgICRyZXNwLkNsb3Nl
+::B64::KCkNCiAgICAgICAgJGRvd25sb2FkU3VjY2VzcyA9ICR0cnVlDQogICAgfSBjYXRjaCB7DQogICAg
+::B64::ICAgIFdyaXRlLUhvc3QgImBuW+mUmeivr10g5LiL6L295aSx6LSlOiAkKCRfLkV4Y2VwdGlvbi5N
+::B64::ZXNzYWdlKSIgLUZvcmVncm91bmRDb2xvciBSZWQNCiAgICAgICAgV3JpdGUtSG9zdCAi6K+356Gu
+::B64::5L+d5bey5ZCv5Yqo5Luj55CG5bel5YW3ICh2MnJheU4pIOW5tuato+W4uOi/nuaOpee9kee7nOOA
+::B64::giIgLUZvcmVncm91bmRDb2xvciBZZWxsb3cNCiAgICAgICAgUmVhZC1Ib3N0ICLmjIkgRW50ZXIg
+::B64::6YCA5Ye6Ig0KICAgICAgICBleGl0IDENCiAgICB9DQp9DQoNCldyaXRlLUhvc3QgImBuICAgW+Wu
+::B64::jOaIkF0g5LiL6L295oiQ5Yqf77yBIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQpXcml0ZS1Ib3N0
+::B64::ICIiDQoNCiMg5q2l6aqkIDM6IOajgOafpeW5tuW5s+eos+mAgOWHuui/kOihjOS4reeahCBUZWxl
+::B64::Z3JhbQ0KV3JpdGUtSG9zdCAiW+atpemqpCAzLzVdIOajgOa1iyBUZWxlZ3JhbSDov5DooYznirbm
+::B64::gIEuLi4iIC1Gb3JlZ3JvdW5kQ29sb3IgQ3lhbg0KJHJ1bm5pbmdQcm9jcyA9IEdldC1Qcm9jZXNz
+::B64::IFRlbGVncmFtIC1FcnJvckFjdGlvbiBTaWxlbnRseUNvbnRpbnVlDQppZiAoJHJ1bm5pbmdQcm9j
+::B64::cykgew0KICAgIFdyaXRlLUhvc3QgIiAgIOajgOa1i+WIsCBUZWxlZ3JhbSDmraPlnKjov5DooYzv
+::B64::vIzmraPlnKjlubPnqLPlhbPpl63ku6Xmm7/mjaLnqIvluo/mlofku7YuLi4iIC1Gb3JlZ3JvdW5k
+::B64::Q29sb3IgWWVsbG93DQogICAgJHJ1bm5pbmdQcm9jcyB8IFN0b3AtUHJvY2VzcyAtRm9yY2UNCiAg
+::B64::ICAkdGltZW91dCA9IDEwDQogICAgd2hpbGUgKChHZXQtUHJvY2VzcyBUZWxlZ3JhbSAtRXJyb3JB
+::B64::Y3Rpb24gU2lsZW50bHlDb250aW51ZSkgLWFuZCAoJHRpbWVvdXQgLWd0IDApKSB7DQogICAgICAg
+::B64::IFN0YXJ0LVNsZWVwIC1TZWNvbmRzIDENCiAgICAgICAgJHRpbWVvdXQtLQ0KICAgIH0NCiAgICBX
+::B64::cml0ZS1Ib3N0ICIgICDlt7LmiJDlip/lhbPpl63ml6fov5vnqIvjgIIiIC1Gb3JlZ3JvdW5kQ29s
+::B64::b3IgR3JheQ0KfSBlbHNlIHsNCiAgICBXcml0ZS1Ib3N0ICIgICBUZWxlZ3JhbSDmnKrlnKjov5Do
+::B64::oYzvvIzlh4blpIflsLHnu6rjgIIiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JheQ0KfQ0KV3JpdGUtSG9z
+::B64::dCAiIg0KDQojIOatpemqpCA0OiDmm7/mjaLmoLjlv4PnqIvluo/mlofku7YNCldyaXRlLUhvc3Qg
+::B64::IlvmraXpqqQgNC81XSDmraPlnKjlronoo4Xlubbml6DnvJ3mm7/mjaLkuLvnqIvluo8uLi4iIC1G
+::B64::b3JlZ3JvdW5kQ29sb3IgQ3lhbg0KDQppZiAoJGlzWmlwKSB7DQogICAgJGV4dHJhY3RGb2xkZXIg
+::B64::PSBKb2luLVBhdGggJGluc3RhbGxEaXIgIl9leHRyYWN0X3RlbXAiDQogICAgaWYgKFRlc3QtUGF0
+::B64::aCAkZXh0cmFjdEZvbGRlcikgeyBSZW1vdmUtSXRlbSAkZXh0cmFjdEZvbGRlciAtUmVjdXJzZSAt
+::B64::Rm9yY2UgfQ0KICAgIA0KICAgIEFkZC1UeXBlIC1Bc3NlbWJseU5hbWUgU3lzdGVtLklPLkNvbXBy
+::B64::ZXNzaW9uLkZpbGVTeXN0ZW0NCiAgICBbU3lzdGVtLklPLkNvbXByZXNzaW9uLlppcEZpbGVdOjpF
+::B64::eHRyYWN0VG9EaXJlY3RvcnkoJHRlbXBGaWxlLCAkZXh0cmFjdEZvbGRlcikNCiAgICANCiAgICAj
+::B64::IOafpeaJvuaPkOWPluWHuuadpeeahCBUZWxlZ3JhbS5leGUNCiAgICAkZXh0cmFjdGVkRXhlID0g
+::B64::R2V0LUNoaWxkSXRlbSAtUGF0aCAkZXh0cmFjdEZvbGRlciAtUmVjdXJzZSAtRmlsdGVyICJUZWxl
+::B64::Z3JhbS5leGUiIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMQ0KICAgIGlmICgkZXh0cmFjdGVkRXhl
+::B64::KSB7DQogICAgICAgIENvcHktSXRlbSAtUGF0aCAkZXh0cmFjdGVkRXhlLkZ1bGxOYW1lIC1EZXN0
+::B64::aW5hdGlvbiAkbG9jYWxFeGUgLUZvcmNlDQogICAgICAgIFdyaXRlLUhvc3QgIiAgIFvmm7TmlrBd
+::B64::IFRlbGVncmFtLmV4ZSDlt7Lmm7TmlrAiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4NCiAgICB9IGVs
+::B64::c2Ugew0KICAgICAgICBXcml0ZS1Ib3N0ICIgICBb6ZSZ6K+vXSDljovnvKnljIXlhoXmnKrmib7l
+::B64::iLAgVGVsZWdyYW0uZXhl77yBIiAtRm9yZWdyb3VuZENvbG9yIFJlZA0KICAgIH0NCiAgICANCiAg
+::B64::ICAkZXh0cmFjdGVkVXBkYXRlciA9IEdldC1DaGlsZEl0ZW0gLVBhdGggJGV4dHJhY3RGb2xkZXIg
+::B64::LVJlY3Vyc2UgLUZpbHRlciAiVXBkYXRlci5leGUiIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMQ0K
+::B64::ICAgIGlmICgkZXh0cmFjdGVkVXBkYXRlcikgew0KICAgICAgICBDb3B5LUl0ZW0gLVBhdGggJGV4
+::B64::dHJhY3RlZFVwZGF0ZXIuRnVsbE5hbWUgLURlc3RpbmF0aW9uIChKb2luLVBhdGggJGluc3RhbGxE
+::B64::aXIgIlVwZGF0ZXIuZXhlIikgLUZvcmNlDQogICAgICAgIFdyaXRlLUhvc3QgIiAgIFvmm7TmlrBd
+::B64::IFVwZGF0ZXIuZXhlIOW3suabtOaWsCIgLUZvcmVncm91bmRDb2xvciBHcmVlbg0KICAgIH0NCiAg
+::B64::ICANCiAgICAjIOa4heeQhuS4tOaXtuaWh+S7tg0KICAgIFJlbW92ZS1JdGVtICRleHRyYWN0Rm9s
+::B64::ZGVyIC1SZWN1cnNlIC1Gb3JjZSAtRXJyb3JBY3Rpb24gU2lsZW50bHlDb250aW51ZQ0KICAgIFJl
+::B64::bW92ZS1JdGVtICR0ZW1wRmlsZSAtRm9yY2UgLUVycm9yQWN0aW9uIFNpbGVudGx5Q29udGludWUN
+::B64::Cn0gZWxzZSB7DQogICAgTW92ZS1JdGVtIC1QYXRoICR0ZW1wRmlsZSAtRGVzdGluYXRpb24gJGxv
+::B64::Y2FsRXhlIC1Gb3JjZQ0KICAgIFdyaXRlLUhvc3QgIiAgIFvmm7TmlrBdIFRlbGVncmFtLmV4ZSDl
+::B64::t7Lmm7TmlrAiIC1Gb3JlZ3JvdW5kQ29sb3IgR3JlZW4NCn0NCg0KIyDkv53lrZjmm7TmlrDorrDl
+::B64::vZUNCiR2ZXJzaW9uRGF0YSA9IEB7DQogICAgYXNzZXRfaWQgPSAkdGFyZ2V0QXNzZXQuaWQNCiAg
+::B64::ICBuYW1lID0gJHJlbGVhc2UubmFtZQ0KICAgIHRhZyA9ICRyZWxlYXNlLnRhZ19uYW1lDQogICAg
+::B64::dXBkYXRlZF9hdCA9ICR0YXJnZXRBc3NldC51cGRhdGVkX2F0DQp9IHwgQ29udmVydFRvLUpzb24N
+::B64::ClNldC1Db250ZW50IC1QYXRoICR2ZXJzaW9uRmlsZSAtVmFsdWUgJHZlcnNpb25EYXRhIC1FbmNv
+::B64::ZGluZyBVVEY4DQoNCldyaXRlLUhvc3QgIiINCldyaXRlLUhvc3QgIj09PT09PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PSIgLUZvcmVn
+::B64::cm91bmRDb2xvciBHcmVlbg0KV3JpdGUtSG9zdCAiICAgICAgICAgICDjgJDmm7TmlrDmiJDlip/j
+::B64::gJFUZWxlZ3JhbSBCb29zdCDlt7LmiJDlip/mm7TmlrDvvIEgICAgICAgICAgICAgICAgIiAtRm9y
+::B64::ZWdyb3VuZENvbG9yIEdyZWVuDQpXcml0ZS1Ib3N0ICIgICAgICAg5Liq5Lq66YWN572u44CB55m7
+::B64::5b2V5Yet5o2u5ZKM6IGK5aSp6K6w5b2V77yIdGRhdGHvvIkxMDAlIOWujOaVtOS/neeVmeOAgiAg
+::B64::ICAgICAgIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQpXcml0ZS1Ib3N0ICI9PT09PT09PT09PT09
+::B64::PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0iIC1G
+::B64::b3JlZ3JvdW5kQ29sb3IgR3JlZW4NCldyaXRlLUhvc3QgIiINCg0KIyDmraXpqqQgNTog6YeN5ZCv
+::B64::IFRlbGVncmFtDQpXcml0ZS1Ib3N0ICJb5q2l6aqkIDUvNV0g5q2j5Zyo6Ieq5Yqo6YeN5paw5ZCv
+::B64::5YqoIFRlbGVncmFtLi4uIiAtRm9yZWdyb3VuZENvbG9yIEN5YW4NClN0YXJ0LVByb2Nlc3MgLUZp
+::B64::bGVQYXRoICRsb2NhbEV4ZQ0KV3JpdGUtSG9zdCAiICAgVGVsZWdyYW0g5bey6YeN5paw5ZCv5Yqo
+::B64::77yBIiAtRm9yZWdyb3VuZENvbG9yIEdyZWVuDQpXcml0ZS1Ib3N0ICIiDQoNCldyaXRlLUhvc3Qg
+::B64::IuacrOeql+WPo+WwhuWcqCA0IOenkuWQjuiHquWKqOmAgOWHui4uLiIgLUZvcmVncm91bmRDb2xv
+::B64::ciBHcmF5DQpTdGFydC1TbGVlcCAtU2Vjb25kcyA0DQpleGl0IDANCg==
