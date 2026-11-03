@@ -21,6 +21,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/cached_round_corners.h"
 #include "lang/lang_keys.h"
 #include "styles/style_media_view.h"
+#include "ui/effects/animations.h"
+#include <QtGui/QPainterPath>
 
 namespace Media {
 namespace View {
@@ -29,6 +31,116 @@ namespace  {
 constexpr auto kEps = 0.005;
 
 } // namespace
+
+class AutoPlayToggle final : public Ui::IconButton {
+public:
+	AutoPlayToggle(QWidget *parent, const style::IconButton &st)
+	: IconButton(parent, st) {
+		resize(40, 32);
+	}
+
+	void setToggled(bool on) {
+		if (_on != on) {
+			_on = on;
+			_anim.start([=] { update(); }, _on ? 0. : 1., _on ? 1. : 0., 150);
+			setToolTip(_on ? u"Autoplay is on"_q : u"Autoplay is off"_q);
+		}
+	}
+
+	void setInitialState(bool on) {
+		_on = on;
+		setToolTip(_on ? u"Autoplay is on"_q : u"Autoplay is off"_q);
+		update();
+	}
+
+	bool toggled() const {
+		return _on;
+	}
+
+protected:
+	void onStateChanged(State was, StateChangeSource source) override {
+		IconButton::onStateChanged(was, source);
+		update();
+	}
+
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		p.setRenderHint(QPainter::Antialiasing);
+
+		const auto progress = _anim.value(_on ? 1. : 0.);
+		const auto over = isOver();
+
+		// YouTube Switch Track
+		const auto trackWidth = 32.0;
+		const auto trackHeight = 14.0;
+		const auto trackX = (width() - trackWidth) / 2.0;
+		const auto trackY = (height() - trackHeight) / 2.0;
+		const auto trackRadius = trackHeight / 2.0;
+
+		const auto offTrackAlpha = over ? 95 : 65;
+		const auto onTrackColor = QColor(62, 166, 255, over ? 190 : 150);
+		const auto offTrackColor = QColor(255, 255, 255, offTrackAlpha);
+
+		const auto trackR = int(offTrackColor.red() + (onTrackColor.red() - offTrackColor.red()) * progress);
+		const auto trackG = int(offTrackColor.green() + (onTrackColor.green() - offTrackColor.green()) * progress);
+		const auto trackB = int(offTrackColor.blue() + (onTrackColor.blue() - offTrackColor.blue()) * progress);
+		const auto trackA = int(offTrackColor.alpha() + (onTrackColor.alpha() - offTrackColor.alpha()) * progress);
+
+		p.setPen(Qt::NoPen);
+		p.setBrush(QColor(trackR, trackG, trackB, trackA));
+		p.drawRoundedRect(QRectF(trackX, trackY, trackWidth, trackHeight), trackRadius, trackRadius);
+
+		// Thumb Knob
+		const auto knobD = 18.0;
+		const auto knobY = (height() - knobD) / 2.0;
+		const auto knobMinX = trackX - 2.0;
+		const auto knobMaxX = trackX + trackWidth - knobD + 2.0;
+		const auto knobX = knobMinX + (knobMaxX - knobMinX) * progress;
+
+		const auto offKnob = over ? QColor(225, 225, 225) : QColor(195, 195, 195);
+		const auto onKnob = QColor(255, 255, 255);
+		const auto knobR = int(offKnob.red() + (onKnob.red() - offKnob.red()) * progress);
+		const auto knobG = int(offKnob.green() + (onKnob.green() - offKnob.green()) * progress);
+		const auto knobB = int(offKnob.blue() + (onKnob.blue() - offKnob.blue()) * progress);
+
+		p.setBrush(QColor(knobR, knobG, knobB));
+		p.drawEllipse(QRectF(knobX, knobY, knobD, knobD));
+
+		// Center icon inside the knob
+		const auto knobCenterX = knobX + knobD / 2.0;
+		const auto knobCenterY = knobY + knobD / 2.0;
+
+		// OFF: Pause symbol (two vertical lines)
+		if (progress < 1.0) {
+			const auto iconAlpha = int((1.0 - progress) * 220);
+			p.setBrush(QColor(35, 35, 35, iconAlpha));
+			const auto barW = 1.6;
+			const auto barH = 6.0;
+			const auto gap = 1.8;
+			p.drawRoundedRect(QRectF(knobCenterX - gap - barW, knobCenterY - barH / 2.0, barW, barH), 0.5, 0.5);
+			p.drawRoundedRect(QRectF(knobCenterX + gap, knobCenterY - barH / 2.0, barW, barH), 0.5, 0.5);
+		}
+
+		// ON: Play symbol (small right-pointing triangle)
+		if (progress > 0.0) {
+			const auto iconAlpha = int(progress * 240);
+			p.setBrush(QColor(24, 24, 24, iconAlpha));
+			QPainterPath triangle;
+			const auto triHalfH = 3.2;
+			const auto triLeft = knobCenterX - 2.0;
+			const auto triRight = knobCenterX + 3.0;
+			triangle.moveTo(triLeft, knobCenterY - triHalfH);
+			triangle.lineTo(triRight, knobCenterY);
+			triangle.lineTo(triLeft, knobCenterY + triHalfH);
+			triangle.closeSubpath();
+			p.drawPath(triangle);
+		}
+	}
+
+private:
+	bool _on = false;
+	Ui::Animations::Simple _anim;
+};
 
 PlaybackControls::PlaybackControls(
 	QWidget *parent,
@@ -92,11 +204,11 @@ PlaybackControls::PlaybackControls(
 	_pictureInPicture->addClickHandler([=] {
 		_delegate->playbackControlsToPictureInPicture();
 	});
+	_autoPlayToggle->setInitialState(_delegate->playbackControlsAutoPlay());
 	_autoPlayToggle->addClickHandler([=] {
 		_delegate->playbackControlsAutoPlayToggled();
 		updateAutoPlayButton();
 	});
-	updateAutoPlayButton();
 
 	_volumeController->setValue(_delegate->playbackControlsCurrentVolume());
 	_volumeController->setChangeProgressCallback([=](float64 value) {
@@ -238,9 +350,7 @@ void PlaybackControls::saveQuality(Media::VideoQuality quality) {
 
 void PlaybackControls::updateAutoPlayButton() {
 	const auto on = _delegate->playbackControlsAutoPlay();
-	_autoPlayToggle->setIconOverride(
-		on ? &st::mediaviewAutoPlayIconOn : nullptr,
-		on ? &st::mediaviewAutoPlayIconOnOver : nullptr);
+	_autoPlayToggle->setToggled(on);
 }
 
 void PlaybackControls::updateSpeedToggleQuality() {

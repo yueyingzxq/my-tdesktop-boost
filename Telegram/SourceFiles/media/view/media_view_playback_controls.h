@@ -28,6 +28,8 @@ class SpeedController;
 
 namespace Media::View {
 
+class AutoPlayToggle;
+
 class PlaybackProgress;
 
 class PlaybackControls : public Ui::RpWidget {
@@ -139,7 +141,7 @@ private:
 	object_ptr<Player::SettingsButton> _speedToggle;
 	object_ptr<Ui::IconButton> _fullScreenToggle;
 	object_ptr<Ui::IconButton> _pictureInPicture;
-	object_ptr<Ui::IconButton> _autoPlayToggle;
+	object_ptr<AutoPlayToggle> _autoPlayToggle;
 	object_ptr<Ui::LabelSimple> _playedAlready;
 	object_ptr<Ui::LabelSimple> _toPlayLeft;
 	object_ptr<Ui::LabelSimple> _downloadProgress = { nullptr };
