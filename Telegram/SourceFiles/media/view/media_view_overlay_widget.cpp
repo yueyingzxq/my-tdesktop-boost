@@ -3149,6 +3149,7 @@ void OverlayWidget::showSaveMsgFile() {
 }
 
 void OverlayWidget::close() {
+	_fullScreenVideoRequested = false;
 	if (isHidden()) {
 		return;
 	}
@@ -4658,6 +4659,7 @@ void OverlayWidget::displayPhoto(
 	destroyThemePreview();
 
 	_fullScreenVideo = false;
+	_fullScreenVideoRequested = false;
 	const auto photoChanged = (_photo != photo);
 	assignMediaPointer(photo);
 	_rotation = _photo->owner().mediaRotation().get(_photo);
@@ -5170,6 +5172,9 @@ void OverlayWidget::initStreamingThumbnail() {
 void OverlayWidget::streamingReady(Streaming::Information &&info) {
 	markStreamedReady();
 	if (videoShown()) {
+		if (_fullScreenVideoRequested && !_fullScreenVideo) {
+			playbackToggleFullScreen();
+		}
 		if (_document
 			&& _streamed
 			&& _streamed->ready
@@ -5319,7 +5324,7 @@ void OverlayWidget::handleStreamingUpdate(Streaming::Update &&update) {
 		updatePlaybackState();
 		if (base::take(_ttlDeferredClose)) {
 			close();
-		} else if (_document && _document->isVideoFile()) {
+		} else if (_document && _document->isVideoFile() && Core::App().settings().videoAutoPlay()) {
 			moveToNextVideo(1);
 		}
 	});
@@ -5504,6 +5509,20 @@ void OverlayWidget::playbackControlsToPictureInPicture() {
 	if (_streamed && _streamed->controls) {
 		switchToPip();
 	}
+}
+
+void OverlayWidget::playbackControlsAutoPlayToggled() {
+	const auto on = !Core::App().settings().videoAutoPlay();
+	Core::App().settings().setVideoAutoPlay(on);
+	if (_streamed && _streamed->controls) {
+		_streamed->controls->updateAutoPlayButton();
+	}
+	activateControls();
+	uiShow()->showToast(on ? u"自动播放: 开启"_q : u"自动播放: 关闭"_q);
+}
+
+bool OverlayWidget::playbackControlsAutoPlay() {
+	return Core::App().settings().videoAutoPlay();
 }
 
 void OverlayWidget::playbackControlsRotate() {
@@ -6017,6 +6036,7 @@ void OverlayWidget::playbackToggleFullScreen() {
 		return;
 	}
 	_fullScreenVideo = !_fullScreenVideo;
+	_fullScreenVideoRequested = _fullScreenVideo;
 	if (_fullScreenVideo) {
 		_fullScreenZoomCache = _zoom;
 	}
@@ -7996,6 +8016,7 @@ bool OverlayWidget::moveToEntity(const Entity &entity, int preloadDelta) {
 	if (v::is_null(entity.data) && !entity.item) {
 		return false;
 	}
+	_fullScreenVideoRequested = _fullScreenVideo;
 	const auto wasFullScreen = _fullScreenVideo;
 	if (const auto item = entity.item) {
 		setContext(ItemContext{
@@ -8017,7 +8038,7 @@ bool OverlayWidget::moveToEntity(const Entity &entity, int preloadDelta) {
 	} else {
 		displayDocument(nullptr);
 	}
-	if (wasFullScreen && _streamed && !_fullScreenVideo) {
+	if (_fullScreenVideoRequested && videoShown() && !_fullScreenVideo) {
 		playbackToggleFullScreen();
 	}
 	preloadData(preloadDelta);

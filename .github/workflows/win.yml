@@ -313,6 +313,9 @@ jobs:
         shell: powershell
         run: |
           Compress-Archive -Path artifact\Telegram.exe, artifact\Updater.exe -DestinationPath artifact\Telegram_x64_qt6.zip -Force
+          Copy-Item 一键更新.bat -Destination artifact\一键更新.bat -Force
+          Copy-Item update.bat -Destination artifact\update.bat -Force
+          Copy-Item update.ps1 -Destination artifact\update.ps1 -Force
 
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
@@ -339,3 +342,6 @@ jobs:
           files: |
             artifact/Telegram_x64_qt6.zip
             artifact/Telegram.exe
+            artifact/一键更新.bat
+            artifact/update.bat
+            artifact/update.ps1

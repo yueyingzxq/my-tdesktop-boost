@@ -577,6 +577,12 @@ public:
 			_videoPlaybackSpeed.value = speed;
 		}
 	}
+	[[nodiscard]] bool videoAutoPlay() const {
+		return _videoAutoPlay;
+	}
+	void setVideoAutoPlay(bool value) {
+		_videoAutoPlay = value;
+	}
 	[[nodiscard]] float64 voicePlaybackSpeed(
 			bool lastNonDefault = false) const {
 		const auto &s = _voicePlaybackSpeed.current();
@@ -1138,6 +1144,7 @@ private:
 	rpl::variable<bool> _pullToNextChannel = true;
 	rpl::variable<bool> _spellcheckerEnabled = true;
 	PlaybackSpeed _videoPlaybackSpeed;
+	bool _videoAutoPlay = true;
 	rpl::variable<PlaybackSpeed> _voicePlaybackSpeed;
 	rpl::variable<PlaybackSpeed> _audioPlaybackSpeed;
 	QByteArray _videoPipGeometry;
