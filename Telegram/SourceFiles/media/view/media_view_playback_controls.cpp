@@ -241,7 +241,6 @@ void PlaybackControls::updateAutoPlayButton() {
 	_autoPlayToggle->setIconOverride(
 		on ? &st::mediaviewAutoPlayIconOn : nullptr,
 		on ? &st::mediaviewAutoPlayIconOnOver : nullptr);
-	_autoPlayToggle->setOpacity(on ? 1.0 : 0.5);
 }
 
 void PlaybackControls::updateSpeedToggleQuality() {
