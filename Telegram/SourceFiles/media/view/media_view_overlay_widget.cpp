@@ -5193,6 +5193,9 @@ void OverlayWidget::streamingReady(Streaming::Information &&info) {
 				}
 			});
 		}
+		if (!isHidden()) {
+			activateControls();
+		}
 	} else {
 		updateContentRect();
 	}
@@ -5246,6 +5249,9 @@ bool OverlayWidget::createStreamingObjects() {
 		_streamed->controls->show();
 		if (_fullScreenVideo) {
 			_streamed->controls->setInFullScreen(true);
+		}
+		if (!isHidden()) {
+			activateControls();
 		}
 		_streamed->sponsored = PlaybackSponsored::Has(_message)
 			? std::make_unique<PlaybackSponsored>(
@@ -8045,6 +8051,9 @@ bool OverlayWidget::moveToEntity(const Entity &entity, int preloadDelta) {
 		playbackToggleFullScreen();
 	}
 	preloadData(preloadDelta);
+	if (!isHidden()) {
+		activateControls();
+	}
 	return true;
 }
 
