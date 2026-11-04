@@ -3203,7 +3203,7 @@ void OverlayWidget::activateControls() {
 	if (!_menu && !_mousePressed && !_touchMove && !_stories) {
 		_controlsHideTimer.callOnce(st::mediaviewWaitHide);
 	}
-	if (_fullScreenVideo) {
+	if (_fullScreenVideo || _fullscreen) {
 		if (_streamed && _streamed->controls) {
 			_streamed->controls->showAnimated();
 		}
@@ -3235,7 +3235,7 @@ void OverlayWidget::hideControls(bool force) {
 			return;
 		}
 	}
-	if (_fullScreenVideo && _streamed && _streamed->controls) {
+	if ((_fullScreenVideo || _fullscreen) && _streamed && _streamed->controls) {
 		_streamed->controls->hideAnimated();
 	}
 	if (_controlsState == ControlsHiding || _controlsState == ControlsHidden) return;
@@ -4649,8 +4649,7 @@ void OverlayWidget::displayPhoto(
 	clearStreaming();
 	destroyThemePreview();
 
-	_fullScreenVideo = false;
-	_fullScreenVideoRequested = false;
+	_fullScreenVideo = _fullScreenVideoRequested;
 	const auto photoChanged = (_photo != photo);
 	assignMediaPointer(photo);
 	_rotation = _photo->owner().mediaRotation().get(_photo);
@@ -4739,9 +4738,12 @@ void OverlayWidget::displayDocument(
 		anim::activation activation,
 		const Data::CloudTheme &cloud,
 		const StartStreaming &startStreaming) {
-	if (!_fullScreenVideoRequested || !doc || !doc->isVideoFile()) {
+	const auto isVisual = doc && (doc->isVideoFile() || doc->isImage() || doc->isAnimation());
+	if (!_fullScreenVideoRequested || !isVisual) {
 		_fullScreenVideo = false;
-		_fullScreenVideoRequested = false;
+		if (!doc) {
+			_fullScreenVideoRequested = false;
+		}
 	} else {
 		_fullScreenVideo = true;
 	}
@@ -6041,7 +6043,11 @@ void OverlayWidget::playbackToggleFullScreen() {
 	if (_stories) {
 		return;
 	}
-	if (!_fullScreenVideo && (!videoShown() || !_streamed || !_streamed->controls)) {
+	const auto canToggle = _fullScreenVideo
+		|| (videoShown() && _streamed && _streamed->controls)
+		|| _photo
+		|| (_document && _document->isImage());
+	if (!canToggle) {
 		return;
 	}
 	_fullScreenVideo = !_fullScreenVideo;
@@ -6054,7 +6060,7 @@ void OverlayWidget::playbackToggleFullScreen() {
 	setZoomLevel(
 		_fullScreenVideo ? kZoomToScreenLevel : _fullScreenZoomCache,
 		true);
-	if (_streamed->controls) {
+	if (_streamed && _streamed->controls) {
 		if (!_fullScreenVideo) {
 			_streamed->controls->showAnimated();
 		}
@@ -6522,7 +6528,7 @@ void OverlayWidget::paint(not_null<Renderer*> renderer) {
 		renderer->paintSpeedBoost(_speedBoostRect);
 	}
 
-	const auto opacity = _fullScreenVideo ? 0. : _controlsOpacity.current();
+	const auto opacity = (_fullScreenVideo && _streamed) ? 0. : _controlsOpacity.current();
 	if (opacity > 0) {
 		paintControls(renderer, opacity);
 		if (!_stories) {
@@ -7467,6 +7473,10 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 	}
 	if (!_menu && key == Qt::Key_Escape) {
+		if (_fullScreenVideo) {
+			playbackToggleFullScreen();
+			return;
+		}
 		if (_document && _document->loading() && !_streamed) {
 			handleDocumentClick();
 		} else {
@@ -7495,6 +7505,10 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 		moveToNext(-1);
 	} else if (key == Qt::Key_F && !modifiers.testFlag(Qt::AltModifier) && !ctrl && !_stories) {
+		if (_fullScreenVideo) {
+			playbackToggleFullScreen();
+			return;
+		}
 		toggleFullScreen();
 		return;
 	} else if (key == Qt::Key_H && !_stories) {
@@ -8164,7 +8178,11 @@ bool OverlayWidget::handleDoubleClick(
 		Qt::MouseButton button) {
 	updateOver(position);
 
-	if (_over != Over::Video || button != Qt::LeftButton) {
+	const auto isVideoOver = (_over == Over::Video);
+	const auto isPhotoOver = (_over == Over::None || _over == Over::Video)
+		&& contentShown()
+		&& finalContentRect().contains(position);
+	if ((!isVideoOver && !isPhotoOver) || button != Qt::LeftButton) {
 		return false;
 	}
 	_speedBoostHoldTimer.cancel();
@@ -8178,6 +8196,10 @@ bool OverlayWidget::handleDoubleClick(
 		}
 		toggleFullScreen(_windowed);
 	} else if (!_streamed) {
+		if (_photo || (_document && _document->isImage()) || _fullScreenVideo) {
+			playbackToggleFullScreen();
+			return true;
+		}
 		return false;
 	} else {
 		playbackToggleFullScreen();
