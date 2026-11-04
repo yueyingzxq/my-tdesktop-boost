@@ -141,6 +141,8 @@ namespace Media {
 namespace View {
 namespace {
 
+bool GlobalFullScreenRequested = false;
+
 [[nodiscard]] int LayoutIndependentKey(not_null<QKeyEvent*> e) {
 	if constexpr (Platform::IsWindows()) {
 		const auto native = int(e->nativeVirtualKey());
@@ -4528,6 +4530,8 @@ void OverlayWidget::activate() {
 }
 
 void OverlayWidget::show(OpenRequest request) {
+	_fullScreenVideoRequested = GlobalFullScreenRequested;
+	_fullScreenVideo = _fullScreenVideoRequested;
 	const auto story = request.story();
 	const auto document = story ? story->document() : request.document();
 	const auto photo = story ? story->photo() : request.photo();
@@ -4986,6 +4990,10 @@ void OverlayWidget::displayFinished(anim::activation activation) {
 void OverlayWidget::showAndActivate() {
 	_body->show();
 	initNormalGeometry();
+	if (_fullScreenVideo) {
+		_fullscreen = true;
+		_windowed = false;
+	}
 	if (_windowed || Platform::IsMac()) {
 		_wasWindowedMode = false;
 	}
@@ -6052,8 +6060,14 @@ void OverlayWidget::playbackToggleFullScreen() {
 	}
 	_fullScreenVideo = !_fullScreenVideo;
 	_fullScreenVideoRequested = _fullScreenVideo;
+	GlobalFullScreenRequested = _fullScreenVideo;
 	if (_fullScreenVideo) {
 		_fullScreenZoomCache = _zoom;
+		if (_windowed) {
+			toggleFullScreen(true);
+		}
+	} else if (_fullscreen) {
+		toggleFullScreen(false);
 	}
 	resizeCenteredControls();
 	recountSkipTop();
@@ -7492,7 +7506,12 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 	} else if (key == Qt::Key_Enter
 		|| key == Qt::Key_Return
 		|| key == Qt::Key_Space) {
-		if (_streamed) {
+		const auto toggleFull = (alt || ctrl)
+			&& (key == Qt::Key_Enter || key == Qt::Key_Return);
+		if (toggleFull) {
+			playbackToggleFullScreen();
+			return;
+		} else if (_streamed) {
 			playbackPauseResume();
 		} else if (_document
 			&& !_document->loading()
@@ -7505,11 +7524,7 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 		moveToNext(-1);
 	} else if (key == Qt::Key_F && !modifiers.testFlag(Qt::AltModifier) && !ctrl && !_stories) {
-		if (_fullScreenVideo) {
-			playbackToggleFullScreen();
-			return;
-		}
-		toggleFullScreen();
+		playbackToggleFullScreen();
 		return;
 	} else if (key == Qt::Key_H && !_stories) {
 		if (_flip & Qt::Horizontal) {
