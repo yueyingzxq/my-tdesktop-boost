@@ -29,11 +29,12 @@
 无论您是第一次使用 Telegram，还是从原版转过来的老玩家，跟着以下步骤即可轻松配置：
 
 ### 第一步：下载软件
-前往 [**Releases 页面**](https://github.com/yueyingzxq/my-tdesktop-boost/releases/tag/latest-boost) 下载最新版本的 `Telegram_x64_qt6.zip`。
+前往 [**Releases 页面**](https://github.com/yueyingzxq/my-tdesktop-boost/releases/tag/latest-boost) 下载适合您操作系统的最新版本：
 
-> 💡 **放置建议**：
-> 将压缩包解压到一个独立的日常文件夹（推荐如 `D:\Software\Telegram\` 或 `E:\Telegram_Boost\`）。
-> **请勿解压在 C 盘 Program Files 或桌面临时文件夹**，防止 Windows 读写权限限制导致自动更新失败。
+* **Windows 用户**：下载 `Telegram_x64_qt6.zip`。
+  > 💡 **放置建议**：解压到一个独立的日常文件夹（推荐如 `D:\Software\Telegram\` 或 `E:\Telegram_Boost\`）。**请勿解压在 C 盘 Program Files 或桌面临时文件夹**，防止 Windows 权限拦截导致自动更新失败。
+* **macOS 用户**：下载 `Telegram_macOS.zip`。
+  > 💡 **安装建议**：解压后将 `Telegram.app` 拖入 `应用程序` (Applications) 文件夹。首次若提示“无法打开，因为无法验证开发者”，在“应用程序”中**右键 Telegram 选择“打开”**即可，或在终端执行 `xattr -cr /Applications/Telegram.app` 解除隔离。
 
 ### 第二步：网络代理配置（国内必配）
 Telegram 在国内需要配合代理软件（v2rayN、Clash 等）使用：
@@ -77,7 +78,11 @@ Telegram 在国内需要配合代理软件（v2rayN、Clash 等）使用：
 
 ## 🛠️ 项目构建说明（开发者）
 
-本仓库由 GitHub Actions (`.github/workflows/win.yml`) 自动化流水线编译打包。
+本仓库已配置 GitHub Actions 跨平台自动化流水线：
+* **Windows 构建流水线** (`.github/workflows/win.yml`)：基于 MSVC & Qt 6 构建 Windows x64 极速便携版。
+* **macOS 构建流水线** (`.github/workflows/mac.yml`)：基于 Apple Silicon / macOS 14 & Qt 6 构建 macOS 原生 App。
+
+每次推送到 `feature/speed-boost` 或 `dev` 分支时，Actions 会自动触发两端并行全自动编译打包，并将产物同步发布至 [**Releases (latest-boost)**](https://github.com/yueyingzxq/my-tdesktop-boost/releases/tag/latest-boost)。
 - **编译器**：MSVC 2022 / 2026 x64
 - **Qt 版本**：Qt 6.11.2 (Static)
 - **依赖库**：OpenSSL 3.5+, mozjpeg, zlib, liblcms2, tg_angle
