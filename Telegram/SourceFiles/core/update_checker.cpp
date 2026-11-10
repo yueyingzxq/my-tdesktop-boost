@@ -398,7 +398,7 @@ QString ExtractFilename(const QString &url) {
 	const auto expression = QRegularExpression(u"/([^/\\?]+)(\\?|$)"_q);
 	if (const auto match = expression.match(url); match.hasMatch()) {
 		return match.captured(1).replace(
-			QRegularExpression(u"[^a-zA-Z0-9_\\-\.]"_q),
+			QRegularExpression(u"[^a-zA-Z0-9_\\-\\.]"_q),
 			QString());
 	}
 	return QString();
@@ -599,8 +599,8 @@ bool UnpackUpdate(const QString &filepath) {
 		}
 		QFile verFile(tempDirPath + u"/tdata/version"_q);
 		if (verFile.open(QIODevice::WriteOnly)) {
-			DWORD v = AppVersion + 100;
-			verFile.write(reinterpret_cast<const char*>(&v), sizeof(DWORD));
+			quint32 v = AppVersion + 100;
+			verFile.write(reinterpret_cast<const char*>(&v), sizeof(quint32));
 			verFile.close();
 		}
 		if (g_boostPendingAssetId > 0) {
@@ -874,16 +874,16 @@ bool HttpChecker::handleResponse(const QByteArray &response) {
 		return false;
 	}
 
-	const auto remoteAssetId = targetAsset[u"id"_q].toInteger();
+	const auto remoteAssetId = targetAsset[u"id"_q].toVariant().toLongLong();
 	const auto downloadUrl = targetAsset[u"browser_download_url"_q].toString();
 	const auto updatedAt = targetAsset[u"updated_at"_q].toString();
 
-	int64 localAssetId = 0;
+	qint64 localAssetId = 0;
 	QFile localVerFile(cWorkingDir() + u".boost_version.json"_q);
 	if (localVerFile.open(QIODevice::ReadOnly)) {
 		const auto localDoc = QJsonDocument::fromJson(localVerFile.readAll());
 		if (localDoc.isObject()) {
-			localAssetId = localDoc.object()[u"asset_id"_q].toInteger();
+			localAssetId = localDoc.object()[u"asset_id"_q].toVariant().toLongLong();
 		}
 		localVerFile.close();
 	}

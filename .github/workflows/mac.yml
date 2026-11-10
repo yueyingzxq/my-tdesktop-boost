@@ -1,0 +1,312 @@
+name: MacOS.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/speed-boost
+      - dev
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '!docs/building-mac*.md'
+      - 'changelog.txt'
+      - 'LEGAL'
+      - 'LICENSE'
+      - '.github/**'
+      - '!.github/workflows/mac.yml'
+      - 'lib/xdg/**'
+      - 'snap/**'
+      - 'Telegram/build/docker/**'
+      - 'Telegram/Resources/uwp/**'
+      - 'Telegram/Resources/winrc/**'
+      - 'Telegram/SourceFiles/platform/win/**'
+      - 'Telegram/SourceFiles/platform/linux/**'
+      - 'Telegram/configure.bat'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '!docs/building-mac*.md'
+      - 'changelog.txt'
+      - 'LEGAL'
+      - 'LICENSE'
+      - '.github/**'
+      - '!.github/workflows/mac.yml'
+      - 'lib/xdg/**'
+      - 'snap/**'
+      - 'Telegram/build/docker/**'
+      - 'Telegram/Resources/uwp/**'
+      - 'Telegram/Resources/winrc/**'
+      - 'Telegram/SourceFiles/platform/win/**'
+      - 'Telegram/SourceFiles/platform/linux/**'
+      - 'Telegram/configure.bat'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  macos:
+    name: MacOS
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    strategy:
+      matrix:
+        defines:
+          - ""
+
+    env:
+      GIT: "https://github.com"
+      CMAKE_GENERATOR: "Ninja"
+      CMAKE_BUILD_TYPE: "Release"
+      CMAKE_BUILD_PARALLEL_LEVEL: ""
+      CMAKE_PREFIX_PATH: "/opt/homebrew/opt/ffmpeg@6:/opt/homebrew/opt/openal-soft"
+      TDE2E: "51743dfd01dff6179e2d8f7095729caa4e2222e9"
+      TLOTTIE: "92df98dc209bc39b1e567ec74a8c86a0af5239de"
+      WALLET_ENGINE: "e59e0d89d7ee90c388bf36e3334c5b276f396697"
+      RUST_PATCHES: "aec474953ff7ee9b6e4cd9b8658288ea86d124f3"
+      RUST_TOOLCHAIN: "1.96.1"
+      UPLOAD_ARTIFACT: "true"
+      ONLY_CACHE: "false"
+      MANUAL_CACHING: "1"
+      AUTO_CACHING: "1"
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: ${{ env.REPO_NAME }}
+
+      - name: First set up.
+        run: |
+          libs="ada-url ffmpeg@6 jpeg-xl libavif libheif minizip openal-soft openh264 openssl opus qtbase qtimageformats qtshadertools qtsvg xz"
+          brew update
+          brew upgrade || true
+          brew install autoconf automake boost cmake libtool ninja pkg-config python $libs
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake || true
+
+          xcodebuild -version > CACHE_KEY.txt
+          brew list --versions $libs >> CACHE_KEY.txt
+          echo $MANUAL_CACHING >> CACHE_KEY.txt
+          echo "$GITHUB_WORKSPACE" >> CACHE_KEY.txt
+          if [ "$AUTO_CACHING" = "1" ]; then
+            thisFile=$REPO_NAME/.github/workflows/mac.yml
+            echo `md5 -q $thisFile` >> CACHE_KEY.txt
+          fi
+          echo "CACHE_KEY=`md5 -q CACHE_KEY.txt`" >> $GITHUB_ENV
+
+          TARGET=$(grep 'set(QT_SUPPORTED_MIN_MACOS_VERSION' /opt/homebrew/Cellar/qtbase/*/lib/cmake/Qt6/Qt6ConfigExtras.cmake 2>/dev/null | head -n 1 | sed -E 's/^.*"(.*)"\)$/\1/' || true)
+          if [ -z "$TARGET" ]; then TARGET="12.0"; fi
+          echo "MACOSX_DEPLOYMENT_TARGET=$TARGET" >> $GITHUB_ENV
+          echo "LibrariesPath=`pwd`" >> $GITHUB_ENV
+
+          echo "RNNOISE=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/xiph/rnnoise/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
+          echo "WEBRTC=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/desktop-app/tg_owt/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
+
+      - name: Rust libraries cache.
+        id: cache-tdesktop-rust
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LibrariesPath }}/local/tdesktop_rust
+          key: ${{ runner.OS }}-tdesktop-rust-${{ env.TLOTTIE }}-${{ env.WALLET_ENGINE }}-${{ env.RUST_PATCHES }}-${{ env.RUST_TOOLCHAIN }}-${{ env.CACHE_KEY }}
+      - name: Rust libraries.
+        if: steps.cache-tdesktop-rust.outputs.cache-hit != 'true'
+        run: |
+          cd "$LibrariesPath"
+          export RUSTUP_HOME="$LibrariesPath/rustup"
+          export CARGO_HOME="$LibrariesPath/cargo"
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh
+          sh rustup-init.sh -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
+          export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+          export PATH="$CARGO_HOME/bin:$PATH"
+
+          git init rust-patches
+          cd rust-patches
+          git remote add origin "$GIT/desktop-app/patches.git"
+          git fetch --depth=1 origin "$RUST_PATCHES"
+          git reset --hard FETCH_HEAD
+          cd "$LibrariesPath"
+
+          git init tlottie
+          cd tlottie
+          git remote add origin "$GIT/dkaraush/tlottie.git"
+          git fetch --depth=1 origin "$TLOTTIE"
+          git reset --hard FETCH_HEAD
+          cd "$LibrariesPath"
+
+          export GIT_LFS_SKIP_SMUDGE=1
+          git init wallet-engine
+          cd wallet-engine
+          git remote add origin "$GIT/i582/wallet-engine.git"
+          git fetch --depth=1 origin "$WALLET_ENGINE"
+          git reset --hard FETCH_HEAD
+          git apply ../rust-patches/wallet-engine.patch
+          cd "$LibrariesPath"
+
+          cargo new --lib --vcs none tdesktop_rust
+          cd tdesktop_rust
+          printf 'pub use ::tlottie;\npub use ::wallet_engine;\n' > src/lib.rs
+          cargo add --path ../tlottie --features c-api
+          cargo add --path ../wallet-engine
+          cargo rustc --lib --release \
+            --crate-type staticlib --crate-type cdylib \
+            --config "profile.release.opt-level='z'" \
+            --config "profile.release.lto='thin'" \
+            --config "profile.release.codegen-units=1" \
+            --config "profile.release.panic='unwind'" \
+            --config "profile.release.package.tlottie.opt-level=3" \
+            -- --print native-static-libs
+          install -d "$LibrariesPath/local/tdesktop_rust/lib" "$LibrariesPath/local/tdesktop_rust/include/tlottie" "$LibrariesPath/local/tdesktop_rust/include/wallet_engine"
+          install -m 644 target/release/libtdesktop_rust.a "$LibrariesPath/local/tdesktop_rust/lib/libtdesktop_rust.a"
+          install -m 644 ../tlottie/include/tlottie.h "$LibrariesPath/local/tdesktop_rust/include/tlottie/tlottie.h"
+          cargo run --manifest-path ../wallet-engine/bindgen/cpp/bindgen/Cargo.toml --locked -- \
+            --library --out-dir "$LibrariesPath/local/tdesktop_rust/include/wallet_engine" \
+            target/release/libtdesktop_rust.dylib
+
+      - name: RNNoise cache.
+        id: cache-rnnoise
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LibrariesPath }}/local/rnnoise
+          key: ${{ runner.OS }}-rnnoise-${{ env.RNNOISE }}-${{ env.CACHE_KEY }}
+      - name: RNNoise.
+        if: steps.cache-rnnoise.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+
+          git clone --depth=1 $GIT/xiph/rnnoise.git
+          cd rnnoise
+          ./autogen.sh
+          ./configure --prefix=$LibrariesPath/local/rnnoise --disable-examples --disable-doc
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+
+      - name: WebRTC cache.
+        id: cache-webrtc
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LibrariesPath }}/local/tg_owt
+          key: ${{ runner.OS }}-webrtc-${{ env.WEBRTC }}-${{ env.CACHE_KEY }}
+      - name: WebRTC.
+        if: steps.cache-webrtc.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+
+          git clone --depth=1 --recursive --shallow-submodules $GIT/desktop-app/tg_owt.git
+          cd tg_owt
+
+          cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tg_owt
+          cmake --build build
+          cmake --install build
+
+      - name: TDE2E cache.
+        id: cache-tde2e
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LibrariesPath }}/local/tde2e
+          key: ${{ runner.OS }}-tde2e-${{ env.TDE2E }}-${{ env.CACHE_KEY }}
+      - name: TDE2E.
+        if: steps.cache-tde2e.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+
+          git init tde2e
+          cd tde2e
+          git remote add origin $GIT/tdlib/td.git
+          git fetch --depth=1 origin $TDE2E
+          git reset --hard FETCH_HEAD
+
+          cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tde2e -DTD_E2E_ONLY=ON
+          cmake --build build
+          cmake --install build
+
+      - name: Telegram Desktop build.
+        if: env.ONLY_CACHE == 'false'
+        run: |
+          cd $REPO_NAME
+          export PATH="/opt/homebrew/opt/qtbase/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH$(find $LibrariesPath/local -mindepth 1 -maxdepth 1 -type d -exec printf ':%s' {} +)"
+
+          DEFINE=""
+          if [ -n "${{ matrix.defines }}" ]; then
+            DEFINE="-D ${{ matrix.defines }}=ON"
+            echo "Define from matrix: $DEFINE"
+          fi
+
+          cmake -Bbuild . \
+            -D CMAKE_BUILD_TYPE=Release \
+            -D CMAKE_COMPILE_WARNING_AS_ERROR=OFF \
+            -D TDESKTOP_API_ID=611335 \
+            -D TDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c \
+            -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF \
+            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF \
+            $DEFINE
+
+          cmake --build build --config Release --parallel
+          macdeployqt build/Telegram.app || true
+          codesign --force --deep -s - build/Telegram.app || true
+
+      - name: Move and package artifact.
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          mkdir -p artifact
+          cp $REPO_NAME/新手使用指南.txt artifact/ 2>/dev/null || true
+          ditto -c -k --sequesterRsrc --keepParent $REPO_NAME/build/Telegram.app artifact/Telegram_macOS.zip
+          cp -R $REPO_NAME/build/Telegram.app artifact/
+
+      - uses: actions/upload-artifact@v4
+        if: env.UPLOAD_ARTIFACT == 'true'
+        name: Upload artifact.
+        with:
+          name: Telegram_macOS
+          path: artifact/
+          retention-days: 7
+
+      - name: Publish to GitHub Release.
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/feature/speed-boost' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: latest-boost
+          name: Telegram Desktop Boost (Latest)
+          body: |
+            ## 🚀 Telegram Desktop Boost 极速增强版 (免配置开箱即用)
+            * **构建分支**: `${{ github.ref_name }}`
+            * **提交哈希**: `${{ github.sha }}`
+
+            ### 🌟 核心特性
+            1. ⚡ **16 通道并发极速下载**：突破单线程限制，彻底跑满宽带
+            2. 🎬 **自动连续播放与沉浸全屏**：仿 YouTube 开关，切集 1 秒后自动隐藏控制条，F 键秒切全屏
+            3. ↗️ **原位转发不中断**：观看视频时转发，视频画中持续播放
+            4. 🔄 **软件内一键原生自动更新**：聊天列表底部自动提示更新，点击即完成毫秒级重启升级
+
+            ### 📥 新手从零上手指引 (2 分钟搞定)
+
+            #### 🖥️ Windows 用户：
+            1. **下载与解压**：下载下方 `Telegram_x64_qt6.zip`，解压到非系统盘独立文件夹（如 `D:\Software\Telegram\`）。
+            2. **网络代理设置**：
+               - 打开本地代理工具（如 v2rayN、Clash 等）；
+               - 打开 `Telegram.exe`，在登录界面点击小盾牌或连接设置；
+               - 添加代理：选择 SOCKS5 或 HTTP，地址填 `127.0.0.1`，端口填你的代理端口（v2rayN 默认为 `10808`，Clash 默认为 `7890`）。
+            3. **老用户无缝迁移（免重新登录）**：
+               - 把您旧版 Telegram 目录下的 **`tdata`** 文件夹，复制到本软件目录下，双击打开立刻免密登录，数据 100% 完整保留！
+            4. **一键汉化语言包**：登录后在聊天框打开 `https://t.me/setlanguage/zhcncc` 即可切换中文。
+
+            #### 🍎 macOS 用户：
+            1. **下载与安装**：下载下方 `Telegram_macOS.zip`，解压后将 `Telegram.app` 拖入 `应用程序` (Applications) 文件夹。
+            2. **如果提示“无法打开或开发者未验证”**：
+               - 在访达“应用程序”中找到 Telegram，**右键选择“打开”**，并在弹出提示中点击“打开”；
+               - 或打开“终端” (Terminal) 执行：`xattr -cr /Applications/Telegram.app` 即可永久解除 macOS 门禁隔离。
+            3. **网络代理设置**：
+               - 登录界面点击小盾牌或设置代理：SOCKS5 / HTTP，地址 `127.0.0.1`，端口填你的代理端口（ClashX / Surge / Clash Verge 默认为 `7890`）。
+          files: |
+            artifact/Telegram_macOS.zip
+            artifact/新手使用指南.txt

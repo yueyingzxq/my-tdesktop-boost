@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feature/speed-boost
+      - dev
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -339,13 +340,15 @@ jobs:
             * **提交哈希**: `${{ github.sha }}`
 
             ### 🌟 核心特性
-            1. ⚡ **16 通道并发极速下载**：突破单线程限制，彻底跑满家庭宽带
+            1. ⚡ **16 通道并发极速下载**：突破单线程限制，彻底跑满宽带
             2. 🎬 **自动连续播放与沉浸全屏**：仿 YouTube 开关，切集 1 秒后自动隐藏控制条，F 键秒切全屏
             3. ↗️ **原位转发不中断**：观看视频时转发，视频画中持续播放
             4. 🔄 **软件内一键原生自动更新**：聊天列表底部自动提示更新，点击即完成毫秒级重启升级
 
             ### 📥 新手从零上手指引 (2 分钟搞定)
-            1. **下载与解压**：下载下方 `Telegram_x64_qt6.zip`，解压到非系统盘独立文件夹（如 `D:\Software\Telegram\`，不要放在 C 盘 Program Files）。
+
+            #### 🖥️ Windows 用户：
+            1. **下载与解压**：下载下方 `Telegram_x64_qt6.zip`，解压到非系统盘独立文件夹（如 `D:\Software\Telegram\`）。
             2. **网络代理设置**：
                - 打开本地代理工具（如 v2rayN、Clash 等）；
                - 打开 `Telegram.exe`，在登录界面点击小盾牌或连接设置；
@@ -353,6 +356,14 @@ jobs:
             3. **老用户无缝迁移（免重新登录）**：
                - 把您旧版 Telegram 目录下的 **`tdata`** 文件夹，复制到本软件目录下，双击打开立刻免密登录，数据 100% 完整保留！
             4. **一键汉化语言包**：登录后在聊天框打开 `https://t.me/setlanguage/zhcncc` 即可切换中文。
+
+            #### 🍎 macOS 用户：
+            1. **下载与安装**：下载下方 `Telegram_macOS.zip`，解压后将 `Telegram.app` 拖入 `应用程序` (Applications) 文件夹。
+            2. **如果提示“无法打开或开发者未验证”**：
+               - 在访达“应用程序”中找到 Telegram，**右键选择“打开”**，并在弹出提示中点击“打开”；
+               - 或打开“终端” (Terminal) 执行：`xattr -cr /Applications/Telegram.app` 即可永久解除 macOS 门禁隔离。
+            3. **网络代理设置**：
+               - 登录界面点击小盾牌或设置代理：SOCKS5 / HTTP，地址 `127.0.0.1`，端口填你的代理端口（ClashX / Surge / Clash Verge 默认为 `7890`）。
           files: |
             artifact/Telegram_x64_qt6.zip
             artifact/Telegram.exe
