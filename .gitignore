@@ -74,3 +74,9 @@ settings.local.json
 
 # Generated changelog page (built by CI, deployed to GitHub Pages)
 /docs/changelog/
+
+/Telegram.exe
+/Updater.exe
+/.boost_version.json
+/tdata/
+/log.txt

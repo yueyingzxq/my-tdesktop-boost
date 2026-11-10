@@ -38,6 +38,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QJsonArray>
+#include <QtCore/QProcess>
 #include <QtCore/QFileSystemWatcher>
 
 #include <ksandbox.h>
@@ -81,8 +83,10 @@ constexpr auto kFlatpakPortalObjectPath = "/org/freedesktop/portal/Flatpak";
 constexpr auto kFlatpakUpdated = "/app/.updated"_cs;
 #endif // !Q_OS_WIN && !Q_OS_MAC
 
-// Custom Boost build: disable official updates to prevent overwriting with vanilla client
-bool UpdaterIsDisabled = true;
+// Custom Boost build: native updater enabled for GitHub Release
+bool UpdaterIsDisabled = false;
+qint64 g_boostPendingAssetId = 0;
+QString g_boostPendingUpdatedAt;
 
 std::weak_ptr<Updater> UpdaterInstance;
 
@@ -394,7 +398,7 @@ QString ExtractFilename(const QString &url) {
 	const auto expression = QRegularExpression(u"/([^/\\?]+)(\\?|$)"_q);
 	if (const auto match = expression.match(url); match.hasMatch()) {
 		return match.captured(1).replace(
-			QRegularExpression(u"[^a-zA-Z0-9_\\-]"_q),
+			QRegularExpression(u"[^a-zA-Z0-9_\\-\.]"_q),
 			QString());
 	}
 	return QString();
@@ -550,6 +554,77 @@ bool UnpackUpdate(const QString &filepath) {
 	if (filepath.isEmpty()) {
 		return true;
 	}
+
+#ifdef Q_OS_WIN
+	const auto tempDirPath = cWorkingDir() + u"tupdates/temp"_q;
+	const auto readyFilePath = tempDirPath + u"/ready"_q;
+	base::Platform::DeleteDirectory(tempDirPath);
+	QDir().mkpath(tempDirPath + u"/tdata"_q);
+
+	bool extracted = false;
+	if (filepath.endsWith(u".zip"_q, Qt::CaseInsensitive)) {
+		LOG(("Update Info: Extracting Boost zip update %1").arg(filepath));
+		QProcess proc;
+		proc.start(u"tar"_q, { u"-xf"_q, filepath, u"-C"_q, tempDirPath });
+		if (proc.waitForFinished(60000) && proc.exitCode() == 0) {
+			extracted = true;
+		} else {
+			LOG(("Update Info: tar failed, trying PowerShell Expand-Archive"));
+			QProcess ps;
+			ps.start(u"powershell"_q, {
+				u"-NoProfile"_q,
+				u"-Command"_q,
+				QString("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force").arg(filepath, tempDirPath)
+			});
+			if (ps.waitForFinished(120000) && ps.exitCode() == 0) {
+				extracted = true;
+			}
+		}
+	} else if (filepath.endsWith(u".exe"_q, Qt::CaseInsensitive)) {
+		LOG(("Update Info: Copying Boost exe update %1").arg(filepath));
+		const auto targetExe = tempDirPath + u"/Telegram.exe"_q;
+		if (QFile::exists(targetExe)) {
+			QFile::remove(targetExe);
+		}
+		if (QFile::copy(filepath, targetExe)) {
+			extracted = true;
+		}
+	}
+
+	if (QFile::exists(tempDirPath + u"/Telegram.exe"_q)) {
+		QFile readyFile(readyFilePath);
+		if (readyFile.open(QIODevice::WriteOnly)) {
+			readyFile.write("1");
+			readyFile.close();
+		}
+		QFile verFile(tempDirPath + u"/tdata/version"_q);
+		if (verFile.open(QIODevice::WriteOnly)) {
+			DWORD v = AppVersion + 100;
+			verFile.write(reinterpret_cast<const char*>(&v), sizeof(DWORD));
+			verFile.close();
+		}
+		if (g_boostPendingAssetId > 0) {
+			QFile jsonFile(tempDirPath + u"/.boost_version.json"_q);
+			if (jsonFile.open(QIODevice::WriteOnly)) {
+				QJsonObject obj;
+				obj[u"asset_id"_q] = g_boostPendingAssetId;
+				obj[u"updated_at"_q] = g_boostPendingUpdatedAt;
+				obj[u"name"_q] = u"Telegram Desktop Boost (Latest)"_q;
+				obj[u"tag"_q] = u"latest-boost"_q;
+				jsonFile.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+				jsonFile.close();
+			}
+		}
+		const auto curUpdater = cExeDir() + u"Updater.exe"_q;
+		const auto targetUpdater = tempDirPath + u"/Updater.exe"_q;
+		if (QFile::exists(curUpdater) && !QFile::exists(targetUpdater)) {
+			QFile::copy(curUpdater, targetUpdater);
+		}
+		QFile::remove(filepath);
+		LOG(("Update Info: Boost update unpacked successfully into %1").arg(tempDirPath));
+		return true;
+	}
+#endif // Q_OS_WIN
 
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 	auto error = QString();
@@ -729,13 +804,13 @@ HttpChecker::HttpChecker(bool testing) : Checker(testing) {
 }
 
 void HttpChecker::start() {
-	const auto updaterVersion = Platform::AutoUpdateVersion();
-	const auto path = Local::readAutoupdatePrefix()
-		+ qstr("/current")
-		+ (updaterVersion > 1 ? QString::number(updaterVersion) : QString());
-	auto url = QUrl(path);
-	DEBUG_LOG(("Update Info: requesting update state"));
-	const auto request = QNetworkRequest(url);
+	const auto url = QUrl(u"https://api.github.com/repos/yueyingzxq/my-tdesktop-boost/releases/tags/latest-boost"_q);
+	DEBUG_LOG(("Update Info: requesting update state from GitHub: %1").arg(url.toString()));
+	auto request = QNetworkRequest(url);
+	request.setRawHeader("User-Agent", "Mozilla/5.0 TelegramDesktopBoost");
+	request.setAttribute(
+		QNetworkRequest::RedirectPolicyAttribute,
+		QNetworkRequest::NoLessSafeRedirectPolicy);
 	_manager = std::make_unique<QNetworkAccessManager>();
 	_reply = _manager->get(request);
 	_reply->connect(_reply, &QNetworkReply::finished, [=] {
@@ -755,23 +830,76 @@ void HttpChecker::gotResponse() {
 	const auto response = _reply->readAll();
 	clearSentRequest();
 
-	if (response.size() >= kMaxResponseSize || !handleResponse(response)) {
-		LOG(("Update Error: Bad update map size: %1").arg(response.size()));
+	if (response.isEmpty() || !handleResponse(response)) {
+		LOG(("Update Error: Bad update response: %1").arg(response.size()));
 		gotFailure(QNetworkReply::UnknownContentError);
 	}
 }
 
 bool HttpChecker::handleResponse(const QByteArray &response) {
-	const auto handle = [&](const QString &url) {
-		done(url.isEmpty() ? nullptr : std::make_shared<HttpLoader>(url));
-		return true;
-	};
-	if (const auto url = parseOldResponse(response)) {
-		return handle(*url);
-	} else if (const auto url = parseResponse(response)) {
-		return handle(*url);
+	auto error = QJsonParseError();
+	const auto doc = QJsonDocument::fromJson(response, &error);
+	if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+		LOG(("Update Error: JSON parse error: %1").arg(error.errorString()));
+		return false;
 	}
-	return false;
+	const auto obj = doc.object();
+	const auto assets = obj[u"assets"_q].toArray();
+	if (assets.isEmpty()) {
+		LOG(("Update Error: No assets found in release"));
+		return false;
+	}
+
+	QJsonObject targetAsset;
+	for (const auto &item : assets) {
+		const auto a = item.toObject();
+		const auto name = a[u"name"_q].toString();
+		if (name.endsWith(u".zip"_q, Qt::CaseInsensitive)) {
+			targetAsset = a;
+			break;
+		}
+	}
+	if (targetAsset.isEmpty()) {
+		for (const auto &item : assets) {
+			const auto a = item.toObject();
+			const auto name = a[u"name"_q].toString();
+		if (name == u"Telegram.exe"_q) {
+				targetAsset = a;
+				break;
+			}
+		}
+	}
+	if (targetAsset.isEmpty()) {
+		LOG(("Update Error: No matching target asset found in release"));
+		return false;
+	}
+
+	const auto remoteAssetId = targetAsset[u"id"_q].toInteger();
+	const auto downloadUrl = targetAsset[u"browser_download_url"_q].toString();
+	const auto updatedAt = targetAsset[u"updated_at"_q].toString();
+
+	int64 localAssetId = 0;
+	QFile localVerFile(cWorkingDir() + u".boost_version.json"_q);
+	if (localVerFile.open(QIODevice::ReadOnly)) {
+		const auto localDoc = QJsonDocument::fromJson(localVerFile.readAll());
+		if (localDoc.isObject()) {
+			localAssetId = localDoc.object()[u"asset_id"_q].toInteger();
+		}
+		localVerFile.close();
+	}
+
+	if (localAssetId != 0 && localAssetId == remoteAssetId) {
+		LOG(("Update Info: Already on latest Boost version (asset_id: %1)").arg(remoteAssetId));
+		done(nullptr);
+		return true;
+	}
+
+	g_boostPendingAssetId = remoteAssetId;
+	g_boostPendingUpdatedAt = updatedAt;
+
+	LOG(("Update Info: Found new Boost update (asset_id: %1, url: %2)").arg(remoteAssetId).arg(downloadUrl));
+	done(std::make_shared<HttpLoader>(downloadUrl));
+	return true;
 }
 
 void HttpChecker::clearSentRequest() {
@@ -919,6 +1047,10 @@ void HttpLoaderActor::start() {
 
 void HttpLoaderActor::sendRequest() {
 	auto request = QNetworkRequest(_url);
+	request.setRawHeader("User-Agent", "Mozilla/5.0 TelegramDesktopBoost");
+	request.setAttribute(
+		QNetworkRequest::RedirectPolicyAttribute,
+		QNetworkRequest::NoLessSafeRedirectPolicy);
 	const auto rangeHeaderValue = "bytes="
 		+ QByteArray::number(_parent->alreadySize())
 		+ "-";
@@ -1497,9 +1629,7 @@ bool UpdaterDisabled() {
 }
 
 void SetUpdaterDisabledAtStartup() {
-	Expects(UpdaterInstance.lock() == nullptr);
-
-	UpdaterIsDisabled = true;
+	// Keep native Boost updater enabled
 }
 
 class Updater : public base::has_weak_ptr {
@@ -1730,20 +1860,12 @@ void Updater::start(bool forceWait) {
 		}
 #endif // !Q_OS_WIN && !Q_OS_MAC
 	} else if (sendRequest) {
-		if (BuildIsCanary) {
-			// Canary builds discover updates only through their own MTP
-			// channels, the v1 HTTP feed serves other channels.
-			startImplementation(&_httpImplementation, nullptr);
-		} else {
-			startImplementation(
-				&_httpImplementation,
-				std::make_unique<HttpChecker>(_testing));
-		}
+		startImplementation(
+			&_httpImplementation,
+			std::make_unique<HttpChecker>(_testing));
 		startImplementation(
 			&_mtpImplementation,
-			std::make_unique<MtpChecker>(
-				LookupCanaryPrivateSession(_session),
-				_testing));
+			nullptr);
 
 		_checking.fire({});
 	} else {
@@ -2067,30 +2189,33 @@ bool checkReadyUpdate() {
 			ClearAll();
 			return false;
 		}
-		if (versionNum == 0x7FFFFFFF) { // alpha version
-			LOG(("Update Error: legacy alpha update is not supported."));
-			ClearAll();
-			return false;
-		} else if (versionNum == kVersionFileCanaryMarker) {
-			quint64 canaryVersion = 0;
-			if (fVersion.read((char*)&canaryVersion, sizeof(quint64)) != sizeof(quint64)) {
-				LOG(("Update Error: cant read canary version from file '%1'").arg(versionPath));
+		const auto isBoostUpdate = QFile::exists(readyPath + u"/.boost_version.json"_q);
+		if (!isBoostUpdate) {
+			if (versionNum == 0x7FFFFFFF) { // alpha version
+				LOG(("Update Error: legacy alpha update is not supported."));
+				ClearAll();
+				return false;
+			} else if (versionNum == kVersionFileCanaryMarker) {
+				quint64 canaryVersion = 0;
+				if (fVersion.read((char*)&canaryVersion, sizeof(quint64)) != sizeof(quint64)) {
+					LOG(("Update Error: cant read canary version from file '%1'").arg(versionPath));
+					ClearAll();
+					return false;
+				}
+				if (!BuildIsCanary || canaryVersion <= RunningUpdateVersion()) {
+					LOG(("Update Error: cant install canary version %1 having version %2").arg(canaryVersion).arg(RunningUpdateVersion()));
+					ClearAll();
+					return false;
+				}
+			} else if (BuildUpdateChannel == Updates::Channel::CanaryPrivate) {
+				LOG(("Update Error: cant install a non-canary version %1 on a private canary").arg(versionNum));
+				ClearAll();
+				return false;
+			} else if (versionNum <= AppVersion) {
+				LOG(("Update Error: cant install version %1 having version %2").arg(versionNum).arg(AppVersion));
 				ClearAll();
 				return false;
 			}
-			if (!BuildIsCanary || canaryVersion <= RunningUpdateVersion()) {
-				LOG(("Update Error: cant install canary version %1 having version %2").arg(canaryVersion).arg(RunningUpdateVersion()));
-				ClearAll();
-				return false;
-			}
-		} else if (BuildUpdateChannel == Updates::Channel::CanaryPrivate) {
-			LOG(("Update Error: cant install a non-canary version %1 on a private canary").arg(versionNum));
-			ClearAll();
-			return false;
-		} else if (versionNum <= AppVersion) {
-			LOG(("Update Error: cant install version %1 having version %2").arg(versionNum).arg(AppVersion));
-			ClearAll();
-			return false;
 		}
 		fVersion.close();
 	}

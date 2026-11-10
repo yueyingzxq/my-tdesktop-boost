@@ -314,9 +314,10 @@ jobs:
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
         shell: powershell
         run: |
-          Compress-Archive -Path artifact\Telegram.exe, artifact\Updater.exe -DestinationPath artifact\Telegram_x64_qt6.zip -Force
+          Copy-Item -Path 新手使用指南.txt -Destination artifact\ -Force -ErrorAction SilentlyContinue
           Get-ChildItem -Path . -Filter "*.bat" | Copy-Item -Destination artifact -Force
           Get-ChildItem -Path . -Filter "*.ps1" | Copy-Item -Destination artifact -Force
+          Compress-Archive -Path artifact\Telegram.exe, artifact\Updater.exe, artifact\新手使用指南.txt, artifact\一键更新.bat -DestinationPath artifact\Telegram_x64_qt6.zip -Force
 
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
@@ -333,15 +334,29 @@ jobs:
           tag_name: latest-boost
           name: Telegram Desktop Boost (Latest)
           body: |
-            ## 🚀 Telegram Desktop Boost 自定义加速版
+            ## 🚀 Telegram Desktop Boost 极速增强版 (免配置开箱即用)
             * **构建分支**: `${{ github.ref_name }}`
             * **提交哈希**: `${{ github.sha }}`
-            * **核心优化**:
-              - 并发连接数提升至 16 通道（突破单线程延迟瓶颈，跑满带宽）
-              - 流媒体预取缓冲深度扩展（视频随点随播，杜绝播放转圈卡顿）
-            * **使用方式**: 下载 `Telegram_x64_qt6.zip` 解压到独立文件夹（如 `D:\Telegram_Boost\`），双击 `Telegram.exe` 即可直接使用。
+
+            ### 🌟 核心特性
+            1. ⚡ **16 通道并发极速下载**：突破单线程限制，彻底跑满家庭宽带
+            2. 🎬 **自动连续播放与沉浸全屏**：仿 YouTube 开关，切集 1 秒后自动隐藏控制条，F 键秒切全屏
+            3. ↗️ **原位转发不中断**：观看视频时转发，视频画中持续播放
+            4. 🔄 **软件内一键原生自动更新**：聊天列表底部自动提示更新，点击即完成毫秒级重启升级
+
+            ### 📥 新手从零上手指引 (2 分钟搞定)
+            1. **下载与解压**：下载下方 `Telegram_x64_qt6.zip`，解压到非系统盘独立文件夹（如 `D:\Software\Telegram\`，不要放在 C 盘 Program Files）。
+            2. **网络代理设置**：
+               - 打开本地代理工具（如 v2rayN、Clash 等）；
+               - 打开 `Telegram.exe`，在登录界面点击小盾牌或连接设置；
+               - 添加代理：选择 SOCKS5 或 HTTP，地址填 `127.0.0.1`，端口填你的代理端口（v2rayN 默认为 `10808`，Clash 默认为 `7890`）。
+            3. **老用户无缝迁移（免重新登录）**：
+               - 把您旧版 Telegram 目录下的 **`tdata`** 文件夹，复制到本软件目录下，双击打开立刻免密登录，数据 100% 完整保留！
+            4. **一键汉化语言包**：登录后在聊天框打开 `https://t.me/setlanguage/zhcncc` 即可切换中文。
           files: |
             artifact/Telegram_x64_qt6.zip
             artifact/Telegram.exe
+            artifact/Updater.exe
+            artifact/新手使用指南.txt
             artifact/*.bat
             artifact/*.ps1
