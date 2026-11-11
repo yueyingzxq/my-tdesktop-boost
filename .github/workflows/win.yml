@@ -1,4 +1,5 @@
 name: Windows.
+# Build and release Windows x64 Qt6 with self-healing python packager
 
 on:
   workflow_dispatch:
