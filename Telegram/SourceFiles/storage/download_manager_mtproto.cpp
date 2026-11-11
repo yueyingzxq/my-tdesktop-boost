@@ -15,15 +15,52 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_document.h"
 #include "apiwrap.h"
 #include "base/openssl_help.h"
+#include "base/options.h"
 
 namespace Storage {
+
+base::options::toggle OptionDownloadBoost({
+	.id = "download-boost",
+	.name = "极速下载模式 (Nekogram 体验)",
+	.description = "开启后使用 1MB 大分片和 16 通道高并发下载，把代理带宽拉满；关闭则为官方标准档 (128KB 分片)。",
+	.defaultValue = true,
+});
+
+bool DownloadBoostEnabled() {
+	return OptionDownloadBoost.value();
+}
+
+void SetDownloadBoostEnabled(bool enabled) {
+	OptionDownloadBoost.set(enabled);
+}
+
+int DownloadPartSize() {
+	return DownloadBoostEnabled() ? kDownloadPartSizeBoost : kDownloadPartSize;
+}
+
 namespace {
 
+int StartSessionsCount() {
+	return DownloadBoostEnabled() ? 16 : 2;
+}
+
+int MaxSessionsCount() {
+	return DownloadBoostEnabled() ? 16 : 8;
+}
+
+int StartWaitedInSession() {
+	return DownloadBoostEnabled()
+		? (8 * kDownloadPartSizeBoost)
+		: (16 * kDownloadPartSize);
+}
+
+int MaxWaitedInSession() {
+	return DownloadBoostEnabled()
+		? (16 * kDownloadPartSizeBoost)
+		: (32 * kDownloadPartSize);
+}
+
 constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
-constexpr auto kStartWaitedInSession = 16 * kDownloadPartSize; // 2MB start window
-constexpr auto kMaxWaitedInSession = 32 * kDownloadPartSize;   // 4MB max window
-constexpr auto kStartSessionsCount = 16;                       // 16 sessions directly without slow start
-constexpr auto kMaxSessionsCount = 16;                         // Max allowed by kMaxMediaDcCount (0x10=16)
 constexpr auto kMaxTrackedSessionRemoves = 64;
 constexpr auto kRetryAddSessionTimeout = 8 * crl::time(1000);
 constexpr auto kRetryAddSessionSuccesses = 3;
@@ -110,11 +147,11 @@ void DownloadManagerMtproto::Queue::removeSession(int index) {
 }
 
 DownloadManagerMtproto::DcSessionBalanceData::DcSessionBalanceData()
-: maxWaitedAmount(kStartWaitedInSession) {
+: maxWaitedAmount(StartWaitedInSession()) {
 }
 
 DownloadManagerMtproto::DcBalanceData::DcBalanceData()
-: sessions(kStartSessionsCount) {
+: sessions(StartSessionsCount()) {
 }
 
 DownloadManagerMtproto::DownloadManagerMtproto(not_null<ApiWrap*> api)
@@ -180,14 +217,16 @@ void DownloadManagerMtproto::checkSendNextAfterSuccess(MTP::DcId dcId) {
 bool DownloadManagerMtproto::trySendNextPart(MTP::DcId dcId, Queue &queue) {
 	const auto &balanceData = _balanceData[dcId];
 	const auto &sessions = balanceData.sessions;
+	const auto partSize = Storage::DownloadPartSize();
+	const auto maxWaited = MaxWaitedInSession();
 	const auto bestIndex = [&] {
-		const auto proj = [](const DcSessionBalanceData &data) {
+		const auto proj = [&](const DcSessionBalanceData &data) {
 			return (data.requested < data.maxWaitedAmount)
 				? data.requested
-				: kMaxWaitedInSession;
+				: maxWaited;
 		};
 		const auto j = ranges::min_element(sessions, ranges::less(), proj);
-		return (j->requested + kDownloadPartSize <= j->maxWaitedAmount)
+		return (j->requested + partSize <= j->maxWaitedAmount)
 			? (j - begin(sessions))
 			: -1;
 	}();
@@ -240,7 +279,9 @@ void DownloadManagerMtproto::requestSucceeded(
 	auto &data = dc.sessions[index];
 	const auto overloaded = (timeAtRequestStart <= dc.lastSessionRemove)
 		|| (amountAtRequestStart > data.maxWaitedAmount);
-	const auto parts = amountAtRequestStart / kDownloadPartSize;
+	const auto partSize = Storage::DownloadPartSize();
+	const auto maxWaited = MaxWaitedInSession();
+	const auto parts = amountAtRequestStart / partSize;
 	const auto duration = (crl::now() - timeAtRequestStart);
 	DEBUG_LOG(("Download (%1,%2) request done, duration: %3, parts: %4%5"
 		).arg(dcId
@@ -260,10 +301,10 @@ void DownloadManagerMtproto::requestSucceeded(
 		return;
 	}
 	if (amountAtRequestStart == data.maxWaitedAmount
-		&& data.maxWaitedAmount < kMaxWaitedInSession) {
+		&& data.maxWaitedAmount < maxWaited) {
 		data.maxWaitedAmount = std::min(
-			data.maxWaitedAmount + kDownloadPartSize,
-			kMaxWaitedInSession);
+			data.maxWaitedAmount + partSize,
+			maxWaited);
 		DEBUG_LOG(("Download (%1,%2) increased max waited amount %3."
 			).arg(dcId
 			).arg(index
@@ -283,7 +324,7 @@ void DownloadManagerMtproto::requestSucceeded(
 	if (dc.timeouts > 0) {
 		--dc.timeouts;
 		return;
-	} else if (dc.sessions.size() == kMaxSessionsCount) {
+	} else if (dc.sessions.size() >= MaxSessionsCount()) {
 		return;
 	}
 	const auto now = crl::now();
@@ -322,7 +363,7 @@ void DownloadManagerMtproto::sessionTimedOut(MTP::DcId dcId, int index) {
 	for (auto &session : dc.sessions) {
 		session.successes = 0;
 	}
-	if (dc.sessions.size() == kStartSessionsCount
+	if (dc.sessions.size() <= StartSessionsCount()
 		|| ++dc.timeouts < kRemoveSessionAfterTimeouts) {
 		return;
 	}
@@ -332,7 +373,7 @@ void DownloadManagerMtproto::sessionTimedOut(MTP::DcId dcId, int index) {
 
 void DownloadManagerMtproto::removeSession(MTP::DcId dcId) {
 	auto &dc = _balanceData[dcId];
-	Assert(dc.sessions.size() > kStartSessionsCount);
+	Assert(dc.sessions.size() > StartSessionsCount());
 	const auto index = int(dc.sessions.size() - 1);
 	DEBUG_LOG(("Download (%1,%2) removing, now sessions: %3"
 		).arg(dcId
@@ -349,10 +390,12 @@ void DownloadManagerMtproto::removeSession(MTP::DcId dcId) {
 	}
 	auto &session = dc.sessions.back();
 
+	const auto maxWaited = MaxWaitedInSession();
+	const auto maxSessions = MaxSessionsCount();
 	// Make sure we don't send anything to that session while redirecting.
-	session.requested += kMaxWaitedInSession * kMaxSessionsCount;
+	session.requested += maxWaited * maxSessions;
 	queue.removeSession(index);
-	Assert(session.requested == kMaxWaitedInSession * kMaxSessionsCount);
+	Assert(session.requested >= maxWaited * maxSessions);
 
 	dc.sessions.pop_back();
 	api().instance().killSession(MTP::downloadDcId(dcId, index));
@@ -418,7 +461,8 @@ DownloadMtprotoTask::DownloadMtprotoTask(
 : _owner(owner)
 , _dcId(location.dcId())
 , _location({ location })
-, _origin(origin) {
+, _origin(origin)
+, _partSize(Storage::DownloadPartSize()) {
 }
 
 DownloadMtprotoTask::DownloadMtprotoTask(
@@ -427,7 +471,8 @@ DownloadMtprotoTask::DownloadMtprotoTask(
 	const Location &location)
 : _owner(owner)
 , _dcId(dcId)
-, _location(location) {
+, _location(location)
+, _partSize(Storage::DownloadPartSize()) {
 }
 
 DownloadMtprotoTask::~DownloadMtprotoTask() {
@@ -512,7 +557,7 @@ void DownloadMtprotoTask::removeSession(int sessionIndex) {
 mtpRequestId DownloadMtprotoTask::sendRequest(
 		const RequestData &requestData) {
 	const auto offset = requestData.offset;
-	const auto limit = Storage::kDownloadPartSize;
+	const auto limit = _partSize;
 	const auto shiftedDcId = MTP::downloadDcId(
 		_cdnDcId ? _cdnDcId : dcId(),
 		requestData.sessionIndex);
@@ -520,7 +565,7 @@ mtpRequestId DownloadMtprotoTask::sendRequest(
 		return api().request(MTPupload_GetCdnFile(
 			MTP_bytes(_cdnToken),
 			MTP_long(offset),
-			MTP_int(limit)
+			MTP_int(Storage::kDownloadPartSize)
 		)).done([=](const MTPupload_CdnFile &result, mtpRequestId id) {
 			cdnPartLoaded(result, id);
 		}).fail([=](const MTP::Error &error, mtpRequestId id) {
@@ -577,8 +622,11 @@ mtpRequestId DownloadMtprotoTask::sendRequest(
 		}).toDC(shiftedDcId).send();
 	}, [&](const StorageFileLocation &location) {
 		const auto reference = location.fileReference();
+		const auto flags = (limit > Storage::kDownloadPartSize)
+			? MTPupload_GetFile::Flags(0)
+			: MTPupload_GetFile::Flag::f_cdn_supported;
 		return api().request(MTPupload_GetFile(
-			MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
+			MTP_flags(flags),
 			location.tl(api().session().userId()),
 			MTP_long(offset),
 			MTP_int(limit)
