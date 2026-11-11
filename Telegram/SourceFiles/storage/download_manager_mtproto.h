@@ -19,11 +19,13 @@ class Error;
 
 namespace Storage {
 
-// Different part sizes are not supported for now :(
-// Because we start downloading with some part size
-// and then we get a CDN-redirect where we support only
-// fixed part size download for hash checking.
+// Base part size for standard mode (128 KB) and boost mode (1 MB)
 constexpr auto kDownloadPartSize = 128 * 1024;
+constexpr auto kDownloadPartSizeBoost = 1024 * 1024;
+
+[[nodiscard]] bool DownloadBoostEnabled();
+void SetDownloadBoostEnabled(bool enabled);
+[[nodiscard]] int DownloadPartSize();
 
 class DownloadMtprotoTask;
 
@@ -155,6 +157,9 @@ public:
 	[[nodiscard]] const Location &location() const;
 
 	[[nodiscard]] virtual bool readyToRequest() const = 0;
+	[[nodiscard]] int partSize() const {
+		return _partSize;
+	}
 	void loadPart(int sessionIndex);
 	void removeSession(int sessionIndex);
 
@@ -282,6 +287,8 @@ private:
 	mtpRequestId _cdnHashesRequestId = 0;
 
 	rpl::lifetime _nonPremiumLimitSubscription;
+
+	int _partSize = 0;
 
 };
 

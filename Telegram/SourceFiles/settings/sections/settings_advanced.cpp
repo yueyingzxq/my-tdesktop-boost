@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_privacy_security.h"
 #include "storage/localstorage.h"
 #include "storage/storage_domain.h"
+#include "storage/download_manager_mtproto.h"
 #include "tray.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/single_choice_box.h"
@@ -210,6 +211,23 @@ void BuildDataStorageSection(SectionBuilder &builder) {
 				*showDownloadPath = !checked;
 			}
 		}, askDownloadPath->lifetime());
+	}
+
+	const auto downloadBoost = builder.addButton({
+		.id = u"advanced/download_boost"_q,
+		.title = rpl::single(QString::fromUtf8("极速下载模式 (Nekogram 体验)")),
+		.st = &st::settingsButtonNoIcon,
+		.toggled = rpl::single(Storage::DownloadBoostEnabled()),
+		.keywords = { u"download"_q, u"boost"_q, u"speed"_q, u"nekogram"_q, u"加速"_q, u"下载"_q },
+	});
+
+	if (downloadBoost) {
+		downloadBoost->toggledValue(
+		) | rpl::filter([](bool checked) {
+			return (checked != Storage::DownloadBoostEnabled());
+		}) | rpl::on_next([=](bool checked) {
+			Storage::SetDownloadBoostEnabled(checked);
+		}, downloadBoost->lifetime());
 	}
 
 	builder.addSkip(st::settingsCheckboxesSkip);
