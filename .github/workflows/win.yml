@@ -316,22 +316,12 @@ jobs:
           move %OUT%\Updater.exe artifact/
       - name: Package zip.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
-        shell: powershell
         run: |
-          $repoDir = Join-Path $env:TBUILD $env:REPO_NAME
-          if (Test-Path "$repoDir\新手使用指南.txt") {
-              Copy-Item -Path "$repoDir\新手使用指南.txt" -Destination artifact\ -Force
-          }
-          if (Test-Path "$repoDir\一键更新.bat") {
-              Copy-Item -Path "$repoDir\一键更新.bat" -Destination artifact\ -Force
-          }
-          Get-ChildItem -Path $repoDir -Filter "*.bat" | Copy-Item -Destination artifact -Force -ErrorAction SilentlyContinue
-          Get-ChildItem -Path $repoDir -Filter "*.ps1" | Copy-Item -Destination artifact -Force -ErrorAction SilentlyContinue
-          Push-Location artifact
-          $items = Get-ChildItem -File | Where-Object { $_.Name -notlike "*.zip" } | Select-Object -ExpandProperty Name
-          Write-Host "Packaging items into Telegram_x64_qt6.zip: $($items -join ', ')"
-          Compress-Archive -Path $items -DestinationPath Telegram_x64_qt6.zip -Force
-          Pop-Location
+          if exist "%TBUILD%\%REPO_NAME%\package_windows.py" (
+            python "%TBUILD%\%REPO_NAME%\package_windows.py"
+          ) else (
+            python package_windows.py
+          )
 
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
@@ -381,6 +371,6 @@ jobs:
             artifact/Telegram_x64_qt6.zip
             artifact/Telegram.exe
             artifact/Updater.exe
-            artifact/新手使用指南.txt
+            artifact/QuickStart_Guide.txt
             artifact/*.bat
             artifact/*.ps1
