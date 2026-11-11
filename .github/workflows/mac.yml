@@ -24,6 +24,9 @@ on:
       - 'Telegram/SourceFiles/platform/linux/**'
       - 'Telegram/configure.bat'
   pull_request:
+    branches:
+      - feature/speed-boost
+      - dev
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -62,7 +65,7 @@ jobs:
     env:
       GIT: "https://github.com"
       CMAKE_GENERATOR: "Ninja"
-      CMAKE_BUILD_TYPE: "Release"
+      CMAKE_BUILD_TYPE: "Debug"
       CMAKE_BUILD_PARALLEL_LEVEL: ""
       CMAKE_PREFIX_PATH: "/opt/homebrew/opt/ffmpeg@6:/opt/homebrew/opt/openal-soft"
       TDE2E: "51743dfd01dff6179e2d8f7095729caa4e2222e9"
@@ -233,7 +236,6 @@ jobs:
         if: env.ONLY_CACHE == 'false'
         run: |
           cd $REPO_NAME
-          export PATH="/opt/homebrew/opt/qtbase/bin:$PATH"
           export CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH$(find $LibrariesPath/local -mindepth 1 -maxdepth 1 -type d -exec printf ':%s' {} +)"
 
           DEFINE=""
@@ -242,18 +244,26 @@ jobs:
             echo "Define from matrix: $DEFINE"
           fi
 
-          cmake -Bbuild . \
-            -D CMAKE_BUILD_TYPE=Release \
-            -D CMAKE_COMPILE_WARNING_AS_ERROR=OFF \
-            -D TDESKTOP_API_ID=611335 \
-            -D TDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c \
-            -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF \
-            -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF \
-            $DEFINE
+          cmake -Bbuild . -DTDESKTOP_API_ID=611335 -DTDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c $DEFINE || {
+            echo "=== CMake configuration failed! Showing error logs ==="
+            cat build/CMakeFiles/CMakeOutput.log 2>/dev/null || true
+            cat build/CMakeFiles/CMakeError.log 2>/dev/null || true
+            exit 1
+          }
 
-          cmake --build build --config Release --parallel
+          cmake --build build
           macdeployqt build/Telegram.app || true
           codesign --force --deep -s - build/Telegram.app || true
+
+      - name: Upload cmake logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-error-logs
+          path: |
+            ${{ env.REPO_NAME }}/build/CMakeFiles/CMakeOutput.log
+            ${{ env.REPO_NAME }}/build/CMakeFiles/CMakeError.log
+          retention-days: 7
 
       - name: Move and package artifact.
         if: env.UPLOAD_ARTIFACT == 'true'
