@@ -322,51 +322,48 @@ jobs:
           import os, sys, shutil, zipfile
 
           workspace = os.environ.get('GITHUB_WORKSPACE', os.getcwd())
+          tbuild = os.environ.get('TBUILD', os.path.join(workspace, 'TBuild')).strip()
+          repo_name = os.environ.get('REPO_NAME', 'my-tdesktop-boost').strip()
+
           artifact_dir = os.path.join(workspace, 'artifact')
           os.makedirs(artifact_dir, exist_ok=True)
 
-          # 1. Locate binaries and ensure they are in artifact/
+          # 1. Ensure binaries are in artifact/
+          out_dir = os.path.join(tbuild, repo_name, 'out', 'Release')
           for b in ['Telegram.exe', 'Updater.exe']:
               dst = os.path.join(artifact_dir, b)
               if not os.path.isfile(dst):
-                  for root, dirs, files in os.walk(workspace):
-                      if b in files:
-                          shutil.copy2(os.path.join(root, b), dst)
-                          print(f"Found and copied {b} from {root}")
-                          break
+                  src = os.path.join(out_dir, b)
+                  if os.path.isfile(src):
+                      shutil.copy2(src, dst)
+                      print(f"Copied {b} from {src}")
               if os.path.isfile(dst):
                   print(f"Verified binary: {dst} ({os.path.getsize(dst):,} bytes)")
               else:
-                  print(f"WARNING: Binary {b} was not located in workspace!")
+                  print(f"WARNING: {b} not found!")
 
-          # 2. Locate user guides and copy to artifact/
-          repo_dir = None
-          for root, dirs, files in os.walk(workspace):
-              if '新手使用指南.txt' in files:
-                  repo_dir = root
-                  break
-
-          print(f"Located repo dir: {repo_dir}")
-          if repo_dir:
-              for fname in ['新手使用指南.txt', '一键更新.bat', 'update.bat', 'update.ps1', 'README.md']:
-                  src = os.path.join(repo_dir, fname)
+          # 2. Copy user guide assets from repo root
+          src_dir = os.path.join(tbuild, repo_name)
+          if os.path.isdir(src_dir):
+              for f in ['新手使用指南.txt', '一键更新.bat', 'update.bat', 'update.ps1', 'README.md']:
+                  src = os.path.join(src_dir, f)
                   if os.path.isfile(src):
-                      shutil.copy2(src, os.path.join(artifact_dir, fname))
-                      print(f"Copied user asset: {fname}")
-              guide_src = os.path.join(repo_dir, '新手使用指南.txt')
-              if os.path.isfile(guide_src):
-                  shutil.copy2(guide_src, os.path.join(artifact_dir, 'QuickStart_Guide.txt'))
+                      shutil.copy2(src, os.path.join(artifact_dir, f))
+                      print(f"Copied asset: {f}")
+              guide = os.path.join(src_dir, '新手使用指南.txt')
+              if os.path.isfile(guide):
+                  shutil.copy2(guide, os.path.join(artifact_dir, 'QuickStart_Guide.txt'))
                   print("Copied QuickStart_Guide.txt")
 
           # 3. Create Telegram_x64_qt6.zip
           zip_path = os.path.join(artifact_dir, 'Telegram_x64_qt6.zip')
           files_to_zip = [f for f in os.listdir(artifact_dir) if not f.lower().endswith('.zip') and os.path.isfile(os.path.join(artifact_dir, f))]
-          print(f"Packaging {len(files_to_zip)} files into zip: {files_to_zip}")
+          print(f"Packaging {len(files_to_zip)} files: {files_to_zip}")
 
           with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
               for f in files_to_zip:
                   p = os.path.join(artifact_dir, f)
-                  print(f"  Adding {f} ({os.path.getsize(p):,} bytes)...")
+                  print(f"  Writing {f} ({os.path.getsize(p):,} bytes)...")
                   zf.write(p, arcname=f)
 
           print(f"SUCCESS: Zip created! Size: {os.path.getsize(zip_path):,} bytes")
