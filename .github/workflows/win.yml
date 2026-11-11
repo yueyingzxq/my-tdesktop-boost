@@ -25,6 +25,9 @@ on:
       - 'Telegram/configure.sh'
       - 'Telegram/Telegram.plist'
   pull_request:
+    branches:
+      - feature/speed-boost
+      - dev
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -45,7 +48,7 @@ on:
       - 'Telegram/Telegram.plist'
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
