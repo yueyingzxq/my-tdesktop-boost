@@ -143,11 +143,13 @@ public:
 	DownloadMtprotoTask(
 		not_null<DownloadManagerMtproto*> owner,
 		const StorageFileLocation &location,
-		Data::FileOrigin origin);
+		Data::FileOrigin origin,
+		int partSize = 0);
 	DownloadMtprotoTask(
 		not_null<DownloadManagerMtproto*> owner,
 		MTP::DcId dcId,
-		const Location &location);
+		const Location &location,
+		int partSize = 0);
 	virtual ~DownloadMtprotoTask();
 
 	[[nodiscard]] MTP::DcId dcId() const;
