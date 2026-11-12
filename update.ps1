@@ -96,8 +96,10 @@ if (-not $release -or -not $release.assets -or $release.assets.Count -eq 0) {
     exit 0
 }
 
-# 优先选择高效压缩包 Telegram_x64_qt6.zip (仅约 80MB，速度提升 3 倍)，其次备选单个 exe
-$targetAsset = $release.assets | Where-Object { $_.name -like '*Telegram*.zip' } | Select-Object -First 1
+# 优先选择高效 Windows 压缩包 Telegram_x64_qt6.zip (约 80MB)，排除 macOS 压缩包，其次备选单个 exe
+$targetAsset = $release.assets | Where-Object { 
+    $_.name -like '*x64*.zip' -or ($_.name -like '*Telegram*.zip' -and $_.name -notlike '*macOS*')
+} | Select-Object -First 1
 if (-not $targetAsset) {
     $targetAsset = $release.assets | Where-Object { $_.name -eq 'Telegram.exe' } | Select-Object -First 1
 }
@@ -251,7 +253,11 @@ if ($isZip) {
         Copy-Item -Path $extractedExe.FullName -Destination $localExe -Force
         Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
     } else {
-        Write-Host "   [错误] 压缩包内未找到 Telegram.exe！" -ForegroundColor Red
+        Write-Host "   [错误] 压缩包内未找到 Telegram.exe！更新中止。" -ForegroundColor Red
+        Remove-Item $extractFolder -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+        Read-Host "按 Enter 键退出"
+        exit 1
     }
     
     $extractedUpdater = Get-ChildItem -Path $extractFolder -Recurse -Filter "Updater.exe" | Select-Object -First 1

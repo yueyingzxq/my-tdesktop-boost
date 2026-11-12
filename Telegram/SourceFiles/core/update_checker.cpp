@@ -854,19 +854,33 @@ bool HttpChecker::handleResponse(const QByteArray &response) {
 	for (const auto &item : assets) {
 		const auto a = item.toObject();
 		const auto name = a[u"name"_q].toString();
+#ifdef Q_OS_WIN
+		if (name.endsWith(u".zip"_q, Qt::CaseInsensitive) && !name.contains(u"macOS"_q, Qt::CaseInsensitive)) {
+			targetAsset = a;
+			break;
+		}
+#elif defined Q_OS_MAC
+		if (name.endsWith(u".zip"_q, Qt::CaseInsensitive) && name.contains(u"macOS"_q, Qt::CaseInsensitive)) {
+			targetAsset = a;
+			break;
+		}
+#else
 		if (name.endsWith(u".zip"_q, Qt::CaseInsensitive)) {
 			targetAsset = a;
 			break;
 		}
+#endif
 	}
 	if (targetAsset.isEmpty()) {
 		for (const auto &item : assets) {
 			const auto a = item.toObject();
 			const auto name = a[u"name"_q].toString();
-		if (name == u"Telegram.exe"_q) {
+#ifdef Q_OS_WIN
+			if (name == u"Telegram.exe"_q) {
 				targetAsset = a;
 				break;
 			}
+#endif
 		}
 	}
 	if (targetAsset.isEmpty()) {
