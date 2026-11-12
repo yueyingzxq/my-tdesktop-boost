@@ -21,8 +21,8 @@ namespace Storage {
 
 base::options::toggle OptionDownloadBoost({
 	.id = "download-boost",
-	.name = "极速多线程加速 (Nekogram 体验)",
-	.description = "开启后使用 16 通道高并发连接与流媒体激进预载，把代理带宽拉满并畅享视频秒播；关闭则为官方保守标准档 (2~8 通道)。",
+	.name = "Network Boost",
+	.description = "开启后使用 16 通道并发连接、1MB 极限文件下载、流媒体 8MB 激进预载与 120 秒长连接保活；关闭则为官方保守标准档 (2~8 通道)。",
 	.defaultValue = true,
 });
 
