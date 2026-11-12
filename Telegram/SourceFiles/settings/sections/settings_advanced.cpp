@@ -215,10 +215,10 @@ void BuildDataStorageSection(SectionBuilder &builder) {
 
 	const auto downloadBoost = builder.addButton({
 		.id = u"advanced/download_boost"_q,
-		.title = rpl::single(QString::fromUtf8("极速下载模式 (Nekogram 体验)")),
+		.title = rpl::single(QString::fromUtf8("极速多线程加速 (Nekogram 体验)")),
 		.st = &st::settingsButtonNoIcon,
 		.toggled = rpl::single(Storage::DownloadBoostEnabled()),
-		.keywords = { u"download"_q, u"boost"_q, u"speed"_q, u"nekogram"_q, u"加速"_q, u"下载"_q },
+		.keywords = { u"download"_q, u"boost"_q, u"speed"_q, u"nekogram"_q, u"加速"_q, u"下载"_q, u"多线程"_q, u"极致"_q },
 	});
 
 	if (downloadBoost) {

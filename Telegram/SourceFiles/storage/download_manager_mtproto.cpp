@@ -21,8 +21,8 @@ namespace Storage {
 
 base::options::toggle OptionDownloadBoost({
 	.id = "download-boost",
-	.name = "极速下载模式 (Nekogram 体验)",
-	.description = "开启后使用 1MB 大分片和 16 通道高并发下载，把代理带宽拉满；关闭则为官方标准档 (128KB 分片)。",
+	.name = "极速多线程加速 (Nekogram 体验)",
+	.description = "开启后使用 16 通道高并发连接与流媒体激进预载，把代理带宽拉满并畅享视频秒播；关闭则为官方保守标准档 (2~8 通道)。",
 	.defaultValue = true,
 });
 
@@ -35,7 +35,7 @@ void SetDownloadBoostEnabled(bool enabled) {
 }
 
 int DownloadPartSize() {
-	return DownloadBoostEnabled() ? kDownloadPartSizeBoost : kDownloadPartSize;
+	return kDownloadPartSize;
 }
 
 namespace {
@@ -49,15 +49,11 @@ int MaxSessionsCount() {
 }
 
 int StartWaitedInSession() {
-	return DownloadBoostEnabled()
-		? (8 * kDownloadPartSizeBoost)
-		: (16 * kDownloadPartSize);
+	return (16 * kDownloadPartSize);
 }
 
 int MaxWaitedInSession() {
-	return DownloadBoostEnabled()
-		? (16 * kDownloadPartSizeBoost)
-		: (32 * kDownloadPartSize);
+	return (32 * kDownloadPartSize);
 }
 
 constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
@@ -622,9 +618,7 @@ mtpRequestId DownloadMtprotoTask::sendRequest(
 		}).toDC(shiftedDcId).send();
 	}, [&](const StorageFileLocation &location) {
 		const auto reference = location.fileReference();
-		const auto flags = (limit > Storage::kDownloadPartSize)
-			? MTPupload_GetFile::Flags(0)
-			: MTPupload_GetFile::Flag::f_cdn_supported;
+		const auto flags = MTPupload_GetFile::Flag::f_cdn_supported;
 		return api().request(MTPupload_GetFile(
 			MTP_flags(flags),
 			location.tl(api().session().userId()),

@@ -19,9 +19,8 @@ class Error;
 
 namespace Storage {
 
-// Base part size for standard mode (128 KB) and boost mode (1 MB)
+// Base part size for MTProto downloads and streaming chunks (128 KB)
 constexpr auto kDownloadPartSize = 128 * 1024;
-constexpr auto kDownloadPartSizeBoost = 1024 * 1024;
 
 [[nodiscard]] bool DownloadBoostEnabled();
 void SetDownloadBoostEnabled(bool enabled);

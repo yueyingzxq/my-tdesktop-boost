@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/streaming/media_streaming_common.h"
 #include "media/streaming/media_streaming_loader.h"
 #include "storage/cache/storage_cache_database.h"
+#include "storage/download_manager_mtproto.h"
 
 #include <QtCore/QtEndian>
 
@@ -277,7 +278,8 @@ auto Reader::Slice::prepareFill(
 	result.ready = false;
 	const auto fromOffset = (from / kPartSize) * kPartSize;
 	const auto tillPart = (till + kPartSize - 1) / kPartSize;
-	const auto preloadTillOffset = (tillPart + kPreloadPartsAhead)
+	const auto preloadAhead = Storage::DownloadBoostEnabled() ? 32 : kPreloadPartsAhead;
+	const auto preloadTillOffset = (tillPart + preloadAhead)
 		* kPartSize;
 
 	const auto after = ranges::upper_bound(
@@ -1072,9 +1074,10 @@ void Reader::pruneDoneDownloaderRequests() {
 }
 
 void Reader::sendDownloaderRequests() {
+	const auto limit = Storage::DownloadBoostEnabled() ? 16 : kDownloaderRequestsLimit;
 	auto &&offsets = ranges::views::all(
 		_offsetsForDownloader
-	) | ranges::views::take(kDownloaderRequestsLimit);
+	) | ranges::views::take(limit);
 	for (const auto offset : offsets) {
 		if ((!_cacheHelper || !downloaderWaitForCachedSlice(offset))
 			&& _downloaderOffsetsRequested.emplace(offset).second) {
