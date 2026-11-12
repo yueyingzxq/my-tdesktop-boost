@@ -15,6 +15,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtp_instance.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_auth_key.h"
+#include "storage/download_manager_mtproto.h"
+
+namespace {
+
+int FileDownloadPartSize(int64 fullSize) {
+	if (!Storage::DownloadBoostEnabled()) {
+		return Storage::kDownloadPartSize;
+	}
+	// For files >= 1MB, use 1024*1024 (1MB) parts - maximum allowed by Telegram API
+	if (fullSize >= 1024 * 1024) {
+		return 1024 * 1024;
+	} else if (fullSize >= 512 * 1024) {
+		return 512 * 1024;
+	}
+	return Storage::kDownloadPartSize;
+}
+
+} // namespace
 
 mtpFileLoader::mtpFileLoader(
 	not_null<Main::Session*> session,
@@ -38,7 +56,7 @@ mtpFileLoader::mtpFileLoader(
 	fromCloud,
 	autoLoading,
 	cacheTag)
-, DownloadMtprotoTask(&session->downloader(), location, origin) {
+, DownloadMtprotoTask(&session->downloader(), location, origin, FileDownloadPartSize(fullSize)) {
 }
 
 mtpFileLoader::mtpFileLoader(

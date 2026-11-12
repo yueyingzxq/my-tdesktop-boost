@@ -278,7 +278,7 @@ auto Reader::Slice::prepareFill(
 	result.ready = false;
 	const auto fromOffset = (from / kPartSize) * kPartSize;
 	const auto tillPart = (till + kPartSize - 1) / kPartSize;
-	const auto preloadAhead = Storage::DownloadBoostEnabled() ? 32 : kPreloadPartsAhead;
+	const auto preloadAhead = Storage::DownloadBoostEnabled() ? 64 : kPreloadPartsAhead;
 	const auto preloadTillOffset = (tillPart + preloadAhead)
 		* kPartSize;
 
@@ -1074,7 +1074,7 @@ void Reader::pruneDoneDownloaderRequests() {
 }
 
 void Reader::sendDownloaderRequests() {
-	const auto limit = Storage::DownloadBoostEnabled() ? 16 : kDownloaderRequestsLimit;
+	const auto limit = Storage::DownloadBoostEnabled() ? 32 : kDownloaderRequestsLimit;
 	auto &&offsets = ranges::views::all(
 		_offsetsForDownloader
 	) | ranges::views::take(limit);

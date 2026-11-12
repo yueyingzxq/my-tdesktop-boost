@@ -49,14 +49,18 @@ int MaxSessionsCount() {
 }
 
 int StartWaitedInSession() {
-	return (16 * kDownloadPartSize);
+	return DownloadBoostEnabled()
+		? (32 * kDownloadPartSize)
+		: (16 * kDownloadPartSize);
 }
 
 int MaxWaitedInSession() {
-	return (32 * kDownloadPartSize);
+	return DownloadBoostEnabled()
+		? (64 * kDownloadPartSize)
+		: (32 * kDownloadPartSize);
 }
 
-constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
+constexpr auto kKillSessionTimeout = 120 * crl::time(1000);
 constexpr auto kMaxTrackedSessionRemoves = 64;
 constexpr auto kRetryAddSessionTimeout = 8 * crl::time(1000);
 constexpr auto kRetryAddSessionSuccesses = 3;
@@ -211,9 +215,14 @@ void DownloadManagerMtproto::checkSendNextAfterSuccess(MTP::DcId dcId) {
 }
 
 bool DownloadManagerMtproto::trySendNextPart(MTP::DcId dcId, Queue &queue) {
+	const auto onlyHighestPriority = (_balanceData[dcId].totalRequested > 0);
+	const auto task = queue.nextTask(onlyHighestPriority);
+	if (!task) {
+		return false;
+	}
 	const auto &balanceData = _balanceData[dcId];
 	const auto &sessions = balanceData.sessions;
-	const auto partSize = Storage::DownloadPartSize();
+	const auto partSize = task->partSize();
 	const auto maxWaited = MaxWaitedInSession();
 	const auto bestIndex = [&] {
 		const auto proj = [&](const DcSessionBalanceData &data) {
@@ -229,12 +238,8 @@ bool DownloadManagerMtproto::trySendNextPart(MTP::DcId dcId, Queue &queue) {
 	if (bestIndex < 0) {
 		return false;
 	}
-	const auto onlyHighestPriority = (balanceData.totalRequested > 0);
-	if (const auto task = queue.nextTask(onlyHighestPriority)) {
-		task->loadPart(bestIndex);
-		return true;
-	}
-	return false;
+	task->loadPart(bestIndex);
+	return true;
 }
 
 int DownloadManagerMtproto::changeRequestedAmount(
@@ -453,22 +458,24 @@ void DownloadManagerMtproto::killSessions(MTP::DcId dcId) {
 DownloadMtprotoTask::DownloadMtprotoTask(
 	not_null<DownloadManagerMtproto*> owner,
 	const StorageFileLocation &location,
-	Data::FileOrigin origin)
+	Data::FileOrigin origin,
+	int partSize)
 : _owner(owner)
 , _dcId(location.dcId())
 , _location({ location })
 , _origin(origin)
-, _partSize(Storage::DownloadPartSize()) {
+, _partSize(partSize ? partSize : Storage::DownloadPartSize()) {
 }
 
 DownloadMtprotoTask::DownloadMtprotoTask(
 	not_null<DownloadManagerMtproto*> owner,
 	MTP::DcId dcId,
-	const Location &location)
+	const Location &location,
+	int partSize)
 : _owner(owner)
 , _dcId(dcId)
 , _location(location)
-, _partSize(Storage::DownloadPartSize()) {
+, _partSize(partSize ? partSize : Storage::DownloadPartSize()) {
 }
 
 DownloadMtprotoTask::~DownloadMtprotoTask() {
@@ -618,7 +625,9 @@ mtpRequestId DownloadMtprotoTask::sendRequest(
 		}).toDC(shiftedDcId).send();
 	}, [&](const StorageFileLocation &location) {
 		const auto reference = location.fileReference();
-		const auto flags = MTPupload_GetFile::Flag::f_cdn_supported;
+		const auto flags = (limit > Storage::kDownloadPartSize)
+			? MTPupload_GetFile::Flags(0)
+			: MTPupload_GetFile::Flag::f_cdn_supported;
 		return api().request(MTPupload_GetFile(
 			MTP_flags(flags),
 			location.tl(api().session().userId()),
@@ -849,7 +858,7 @@ void DownloadMtprotoTask::placeSentRequest(
 	const auto amount = _owner->changeRequestedAmount(
 		dcId(),
 		requestData.sessionIndex,
-		Storage::kDownloadPartSize);
+		_partSize);
 	const auto &[i, ok1] = _sentRequests.emplace(requestId, requestData);
 	const auto &[j, ok2] = _requestByOffset.emplace(
 		requestData.offset,
@@ -893,7 +902,7 @@ auto DownloadMtprotoTask::finishSentRequest(
 	_owner->changeRequestedAmount(
 		dcId(),
 		result.sessionIndex,
-		-Storage::kDownloadPartSize);
+		-_partSize);
 	_sentRequests.erase(it);
 	const auto ok = _requestByOffset.remove(result.offset);
 

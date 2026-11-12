@@ -17,17 +17,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "media/streaming/media_streaming_reader.h"
 #include "storage/file_download.h" // kMaxFileInMemory.
+#include "storage/download_manager_mtproto.h"
 
 namespace Data {
 namespace {
 
 constexpr auto kDefaultPreloadPrefix = 4 * 1024 * 1024;
+constexpr auto kBoostPreloadPrefix = 8 * 1024 * 1024;
 
 [[nodiscard]] int64 ChoosePreloadPrefix(not_null<DocumentData*> video) {
 	const auto result = video->videoPreloadPrefix();
-	return result
-		? result
-		: std::min(int64(kDefaultPreloadPrefix), video->size);
+	if (result) {
+		return result;
+	}
+	const auto prefix = int64(Storage::DownloadBoostEnabled()
+		? kBoostPreloadPrefix
+		: kDefaultPreloadPrefix);
+	return std::min(prefix, video->size);
 }
 
 } // namespace
