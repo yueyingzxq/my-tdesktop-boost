@@ -1,10 +1,28 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import shutil
 import zipfile
 
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
+def log(msg):
+    try:
+        print(str(msg))
+    except Exception:
+        try:
+            print(str(msg).encode('ascii', errors='backslashreplace').decode('ascii'))
+        except Exception:
+            pass
+
 def main():
-    print("=== Windows Packaging Script ===")
+    log("=== Windows Packaging Script ===")
     workspace = os.environ.get('GITHUB_WORKSPACE', os.getcwd())
     tbuild = os.environ.get('TBUILD', os.path.join(workspace, 'TBuild'))
     repo_name = os.environ.get('REPO_NAME', 'my-tdesktop-boost')
@@ -17,12 +35,12 @@ def main():
     ]
     repo_dir = None
     for d in candidate_repo_dirs:
-        if os.path.isfile(os.path.join(d, '新手使用指南.txt')) or os.path.isfile(os.path.join(d, 'update.bat')):
+        if os.path.isfile(os.path.join(d, '新手使用指南.txt')) or os.path.isfile(os.path.join(d, 'update.bat')) or os.path.isfile(os.path.join(d, 'README.md')):
             repo_dir = d
             break
             
-    print(f"Workspace: {workspace}")
-    print(f"Repo Dir: {repo_dir}")
+    log(f"Workspace: {workspace}")
+    log(f"Repo Dir: {repo_dir}")
     
     artifact_dir = os.path.join(workspace, 'artifact')
     os.makedirs(artifact_dir, exist_ok=True)
@@ -40,13 +58,13 @@ def main():
             for d in possible_out_dirs:
                 src = os.path.join(d, b)
                 if os.path.isfile(src):
-                    print(f"Copying {b} from {d} -> {artifact_dir}")
+                    log(f"Copying {b} from {d} -> {artifact_dir}")
                     shutil.copy2(src, dst)
                     break
         if os.path.isfile(dst):
-            print(f"Found binary: {dst} ({os.path.getsize(dst):,} bytes)")
+            log(f"Found binary: {dst} ({os.path.getsize(dst):,} bytes)")
         else:
-            print(f"WARNING: Binary {b} not found yet in {artifact_dir} or out dirs!")
+            log(f"WARNING: Binary {b} not found yet in {artifact_dir} or out dirs!")
 
     # 2. Copy user-facing docs and scripts
     user_files = ['新手使用指南.txt', '一键更新.bat', 'update.bat', 'update.ps1', 'README.md']
@@ -55,17 +73,17 @@ def main():
             src = os.path.join(repo_dir, fname)
             if os.path.isfile(src):
                 dst = os.path.join(artifact_dir, fname)
-                print(f"Copying user asset: {fname} -> {dst}")
+                log(f"Copying user asset: {fname} -> {dst}")
                 shutil.copy2(src, dst)
         # Also copy 新手使用指南.txt to QuickStart_Guide.txt for non-ASCII safety on Release upload
         guide_src = os.path.join(repo_dir, '新手使用指南.txt')
         if os.path.isfile(guide_src):
             shutil.copy2(guide_src, os.path.join(artifact_dir, 'QuickStart_Guide.txt'))
-            print("Copied QuickStart_Guide.txt")
+            log("Copied QuickStart_Guide.txt")
 
     # 3. Create Telegram_x64_qt6.zip
     zip_path = os.path.join(artifact_dir, 'Telegram_x64_qt6.zip')
-    print(f"Creating zip package: {zip_path}")
+    log(f"Creating zip package: {zip_path}")
     
     files_to_zip = []
     for fname in os.listdir(artifact_dir):
@@ -75,15 +93,15 @@ def main():
         if os.path.isfile(fpath):
             files_to_zip.append(fname)
             
-    print(f"Files to include in zip ({len(files_to_zip)}): {files_to_zip}")
+    log(f"Files to include in zip ({len(files_to_zip)}): {files_to_zip}")
     with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for fname in files_to_zip:
             fpath = os.path.join(artifact_dir, fname)
-            print(f"  Adding: {fname} ({os.path.getsize(fpath):,} bytes)...")
+            log(f"  Adding: {fname} ({os.path.getsize(fpath):,} bytes)...")
             zf.write(fpath, arcname=fname)
             
-    print(f"Zip created successfully! Size: {os.path.getsize(zip_path):,} bytes")
-    print("=== Packaging complete ===")
+    log(f"Zip created successfully! Size: {os.path.getsize(zip_path):,} bytes")
+    log("=== Packaging complete ===")
 
 if __name__ == '__main__':
     main()

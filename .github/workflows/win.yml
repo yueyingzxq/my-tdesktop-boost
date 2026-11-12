@@ -70,6 +70,8 @@ jobs:
       UPLOAD_ARTIFACT: "true"
       ONLY_CACHE: "false"
       PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+      PYTHONIOENCODING: "utf-8"
+      PYTHONUTF8: "1"
 
     defaults:
       run:
@@ -319,7 +321,25 @@ jobs:
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
         shell: python
         run: |
+          # -*- coding: utf-8 -*-
           import os, sys, shutil, zipfile
+
+          try:
+              if hasattr(sys.stdout, 'reconfigure'):
+                  sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+              if hasattr(sys.stderr, 'reconfigure'):
+                  sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+          except Exception:
+              pass
+
+          def log(msg):
+              try:
+                  print(str(msg))
+              except Exception:
+                  try:
+                      print(str(msg).encode('ascii', errors='backslashreplace').decode('ascii'))
+                  except Exception:
+                      pass
 
           workspace = os.environ.get('GITHUB_WORKSPACE', os.getcwd())
           tbuild = os.environ.get('TBUILD', os.path.join(workspace, 'TBuild')).strip()
@@ -329,44 +349,58 @@ jobs:
           os.makedirs(artifact_dir, exist_ok=True)
 
           # 1. Ensure binaries are in artifact/
-          out_dir = os.path.join(tbuild, repo_name, 'out', 'Release')
+          out_dirs = [
+              os.path.join(tbuild, repo_name, 'out', 'Release'),
+              os.path.join(workspace, 'out', 'Release'),
+              artifact_dir,
+          ]
           for b in ['Telegram.exe', 'Updater.exe']:
               dst = os.path.join(artifact_dir, b)
               if not os.path.isfile(dst):
-                  src = os.path.join(out_dir, b)
-                  if os.path.isfile(src):
-                      shutil.copy2(src, dst)
-                      print(f"Copied {b} from {src}")
+                  for d in out_dirs:
+                      src = os.path.join(d, b)
+                      if os.path.isfile(src):
+                          shutil.copy2(src, dst)
+                          log(f"Copied {b} from {src}")
+                          break
               if os.path.isfile(dst):
-                  print(f"Verified binary: {dst} ({os.path.getsize(dst):,} bytes)")
+                  log(f"Verified binary: {dst} ({os.path.getsize(dst):,} bytes)")
               else:
-                  print(f"WARNING: {b} not found!")
+                  log(f"WARNING: {b} not found in output directories!")
 
           # 2. Copy user guide assets from repo root
-          src_dir = os.path.join(tbuild, repo_name)
-          if os.path.isdir(src_dir):
-              for f in ['新手使用指南.txt', '一键更新.bat', 'update.bat', 'update.ps1', 'README.md']:
-                  src = os.path.join(src_dir, f)
-                  if os.path.isfile(src):
-                      shutil.copy2(src, os.path.join(artifact_dir, f))
-                      print(f"Copied asset: {f}")
-              guide = os.path.join(src_dir, '新手使用指南.txt')
-              if os.path.isfile(guide):
-                  shutil.copy2(guide, os.path.join(artifact_dir, 'QuickStart_Guide.txt'))
-                  print("Copied QuickStart_Guide.txt")
+          src_dirs = [
+              os.path.join(tbuild, repo_name),
+              os.path.join(workspace, repo_name),
+              workspace,
+          ]
+          doc_names = ['新手使用指南.txt', '一键更新.bat', 'update.bat', 'update.ps1', 'README.md']
+          for src_dir in src_dirs:
+              if os.path.isdir(src_dir):
+                  for f in doc_names:
+                      src = os.path.join(src_dir, f)
+                      dst = os.path.join(artifact_dir, f)
+                      if os.path.isfile(src) and not os.path.isfile(dst):
+                          shutil.copy2(src, dst)
+                          log(f"Copied asset: {f}")
+                  guide = os.path.join(src_dir, '新手使用指南.txt')
+                  guide_dst = os.path.join(artifact_dir, 'QuickStart_Guide.txt')
+                  if os.path.isfile(guide) and not os.path.isfile(guide_dst):
+                      shutil.copy2(guide, guide_dst)
+                      log("Copied QuickStart_Guide.txt")
 
           # 3. Create Telegram_x64_qt6.zip
           zip_path = os.path.join(artifact_dir, 'Telegram_x64_qt6.zip')
           files_to_zip = [f for f in os.listdir(artifact_dir) if not f.lower().endswith('.zip') and os.path.isfile(os.path.join(artifact_dir, f))]
-          print(f"Packaging {len(files_to_zip)} files: {files_to_zip}")
+          log(f"Packaging {len(files_to_zip)} files into zip")
 
           with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
               for f in files_to_zip:
                   p = os.path.join(artifact_dir, f)
-                  print(f"  Writing {f} ({os.path.getsize(p):,} bytes)...")
+                  log(f"  Writing {f} ({os.path.getsize(p):,} bytes)...")
                   zf.write(p, arcname=f)
 
-          print(f"SUCCESS: Zip created! Size: {os.path.getsize(zip_path):,} bytes")
+          log(f"SUCCESS: Zip created! Size: {os.path.getsize(zip_path):,} bytes")
 
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
