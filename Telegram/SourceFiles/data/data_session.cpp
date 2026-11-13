@@ -312,11 +312,11 @@ void EnumerateStaticMediaPhotos(
 		not_null<Main::Session*> session,
 		Fn<int()> official) {
 	const auto peak = std::make_shared<int>(0);
-	return rpl::combine(
+	return rpl::merge(
 		session->appConfig().value(),
-		UnlimitedLocalPinsEnabledValue()
-	) | rpl::map([=](rpl::empty_value, bool unlimited) {
-		const auto next = unlimited
+		UnlimitedLocalPinsEnabledValue() | rpl::to_empty
+	) | rpl::map([=] {
+		const auto next = UnlimitedLocalPinsEnabled()
 			? kUnlimitedLocalPinsLimit
 			: official();
 		// Never shrink PinnedList limit mid-session on toggle-off so already

@@ -91,14 +91,16 @@ void SetUnlimitedLocalPinsEnabled(bool enabled) {
 }
 
 rpl::producer<bool> UnlimitedLocalPinsEnabledValue() {
-	return rpl::single(
-		OptionUnlimitedLocalPins.value()
-	) | rpl::then(OptionUnlimitedLocalPins.changes());
+	return rpl::single(rpl::empty) | rpl::then(
+		OptionUnlimitedLocalPins.changes()
+	) | rpl::map([] {
+		return OptionUnlimitedLocalPins.value();
+	});
 }
 
 LocalPinnedChats::LocalPinnedChats(not_null<Session*> owner)
 : _owner(owner)
-, _saveTimer([=] { writeToDisk(); }) {
+, _saveTimer([this] { writeToDisk(); }) {
 }
 
 LocalPinnedChats::~LocalPinnedChats() {
@@ -549,7 +551,12 @@ void LocalPinnedChats::restore(Folder *folder) {
 				_requestedOnce.emplace(reqKey);
 				_owner->histories().requestDialogEntry(
 					history,
-					crl::guard(&_owner->session(), [=] {
+					crl::guard(&_owner->session(), [
+						this,
+						history,
+						folder,
+						reqKey
+					] {
 						_pendingRequests.remove(reqKey);
 						if (!UnlimitedLocalPinsEnabled()) {
 							return;
@@ -618,7 +625,11 @@ void LocalPinnedChats::restore(FilterId filterId) {
 				_requestedOnce.emplace(reqKey);
 				_owner->histories().requestDialogEntry(
 					history,
-					crl::guard(&_owner->session(), [=] {
+					crl::guard(&_owner->session(), [
+						this,
+						filterId,
+						reqKey
+					] {
 						_pendingRequests.remove(reqKey);
 						if (!UnlimitedLocalPinsEnabled()) {
 							return;
