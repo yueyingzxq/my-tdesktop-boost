@@ -304,7 +304,7 @@ bool update() {
 
 		do {
 			wstring fname = dir + L"\\" + findData.cFileName;
-			if (fname.substr(0, tdataDir.size()) == tdataDir && (fname.size() <= tdataDir.size() || fname.at(tdataDir.size()) == '/')) {
+			if (fname.substr(0, tdataDir.size()) == tdataDir && (fname.size() <= tdataDir.size() || fname.at(tdataDir.size()) == L'\\' || fname.at(tdataDir.size()) == L'/')) {
 				writeLog(L"Skipped 'tdata' path '" + fname + L"'");
 			} else if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 				if (findData.cFileName != wstring(L".") && findData.cFileName != wstring(L"..")) {
@@ -313,10 +313,9 @@ bool update() {
 				}
 			} else {
 				wstring tofname = updateTo + fname.substr(updDir.size() + 1);
-				if (equal(tofname, updaterName)) { // bad update - has Updater.exe - delete all dir
-					writeLog(L"Error: bad update, has Updater.exe! '" + tofname + L"' equal '" + updaterName + L"'");
-					delFolder();
-					return false;
+				if (equal(tofname, updaterName)) { // cannot overwrite currently running Updater.exe; skip it safely
+					writeLog(L"Skipped running Updater.exe path '" + fname + L"' -> '" + tofname + L"'");
+					continue;
 				} else if (equal(tofname, updateTo + L"Telegram.exe") && exeName != L"Telegram.exe") {
 					wstring fullBinaryPath = updateTo + exeName;
 					writeLog(L"Target binary found: '" + tofname + L"', changing to '" + fullBinaryPath + L"'");

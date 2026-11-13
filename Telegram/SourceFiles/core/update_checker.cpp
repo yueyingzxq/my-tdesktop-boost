@@ -566,17 +566,21 @@ bool UnpackUpdate(const QString &filepath) {
 		LOG(("Update Info: Extracting Boost zip update %1").arg(filepath));
 		QProcess proc;
 		proc.start(u"tar"_q, { u"-xf"_q, filepath, u"-C"_q, tempDirPath });
-		if (proc.waitForFinished(60000) && proc.exitCode() == 0) {
+		if (proc.waitForFinished(60000)
+			&& proc.exitCode() == 0
+			&& QFile::exists(tempDirPath + u"/Telegram.exe"_q)) {
 			extracted = true;
 		} else {
-			LOG(("Update Info: tar failed, trying PowerShell Expand-Archive"));
+			LOG(("Update Info: tar failed (code %1), trying PowerShell Expand-Archive").arg(proc.exitCode()));
 			QProcess ps;
 			ps.start(u"powershell"_q, {
 				u"-NoProfile"_q,
 				u"-Command"_q,
 				QString("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force").arg(filepath, tempDirPath)
 			});
-			if (ps.waitForFinished(120000) && ps.exitCode() == 0) {
+			if (ps.waitForFinished(120000)
+				&& ps.exitCode() == 0
+				&& QFile::exists(tempDirPath + u"/Telegram.exe"_q)) {
 				extracted = true;
 			}
 		}
@@ -591,17 +595,11 @@ bool UnpackUpdate(const QString &filepath) {
 		}
 	}
 
-	if (QFile::exists(tempDirPath + u"/Telegram.exe"_q)) {
-		QFile readyFile(readyFilePath);
-		if (readyFile.open(QIODevice::WriteOnly)) {
-			readyFile.write("1");
-			readyFile.close();
-		}
-		QFile verFile(tempDirPath + u"/tdata/version"_q);
-		if (verFile.open(QIODevice::WriteOnly)) {
-			quint32 v = AppVersion + 100;
-			verFile.write(reinterpret_cast<const char*>(&v), sizeof(quint32));
-			verFile.close();
+	if (extracted && QFile::exists(tempDirPath + u"/Telegram.exe"_q)) {
+		QDir tempDir(tempDirPath);
+		if (!WriteUpdateVersionFile(tempDir, tempDirPath, AppVersion + 100, 0)
+			|| !WriteUpdateReadyFile(readyFilePath)) {
+			return false;
 		}
 		if (g_boostPendingAssetId > 0) {
 			QFile jsonFile(tempDirPath + u"/.boost_version.json"_q);
@@ -892,14 +890,20 @@ bool HttpChecker::handleResponse(const QByteArray &response) {
 	const auto downloadUrl = targetAsset[u"browser_download_url"_q].toString();
 	const auto updatedAt = targetAsset[u"updated_at"_q].toString();
 
-	qint64 localAssetId = 0;
-	QFile localVerFile(cWorkingDir() + u".boost_version.json"_q);
-	if (localVerFile.open(QIODevice::ReadOnly)) {
-		const auto localDoc = QJsonDocument::fromJson(localVerFile.readAll());
-		if (localDoc.isObject()) {
-			localAssetId = localDoc.object()[u"asset_id"_q].toVariant().toLongLong();
+	const auto readLocalAssetId = [](const QString &path) -> qint64 {
+		QFile file(path);
+		if (file.open(QIODevice::ReadOnly)) {
+			const auto doc = QJsonDocument::fromJson(file.readAll());
+			file.close();
+			if (doc.isObject()) {
+				return doc.object()[u"asset_id"_q].toVariant().toLongLong();
+			}
 		}
-		localVerFile.close();
+		return 0;
+	};
+	qint64 localAssetId = readLocalAssetId(cExeDir() + u".boost_version.json"_q);
+	if (!localAssetId) {
+		localAssetId = readLocalAssetId(cWorkingDir() + u".boost_version.json"_q);
 	}
 
 	if (localAssetId != 0 && localAssetId == remoteAssetId) {
@@ -1659,6 +1663,7 @@ public:
 	void start(bool forceWait);
 	void stop();
 	void test();
+	void resetReadyFailure();
 
 	State state() const;
 	int already() const;
@@ -1940,6 +1945,11 @@ void Updater::test() {
 	_testing = true;
 	cSetLastUpdateCheck(0);
 	start(false);
+}
+
+void Updater::resetReadyFailure() {
+	stop();
+	_failed.fire({});
 }
 
 void Updater::setMtproto(base::weak_ptr<Main::Session> session) {
@@ -2234,6 +2244,16 @@ bool checkReadyUpdate() {
 		fVersion.close();
 	}
 
+	const auto failUpdate = [&] {
+		ClearAll();
+		if (const auto updater = UpdaterInstance.lock()) {
+			if (updater->state() == State::Ready) {
+				updater->resetReadyFailure();
+			}
+		}
+		return false;
+	};
+
 #ifdef Q_OS_WIN
 	QString curUpdater = (cExeDir() + u"Updater.exe"_q);
 	QFileInfo updater(cWorkingDir() + u"tupdates/temp/Updater.exe"_q);
@@ -2247,58 +2267,70 @@ bool checkReadyUpdate() {
 	if (!updater.exists()) {
 		QFileInfo current(curUpdater);
 		if (!current.exists()) {
-			ClearAll();
-			return false;
+			return failUpdate();
 		}
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 		if (!KSandbox::isInside()) {
 			if (!current.isFile() || !current.isExecutable()) {
-				ClearAll();
-				return false;
+				return failUpdate();
 			}
 			return true;
 		}
 #endif // !Q_OS_WIN && !Q_OS_MAC
 		if (!QFile(current.absoluteFilePath()).copy(updater.absoluteFilePath())) {
-			ClearAll();
-			return false;
+			return failUpdate();
 		}
 	}
 #ifdef Q_OS_WIN
-	if (CopyFile(updater.absoluteFilePath().toStdWString().c_str(), curUpdater.toStdWString().c_str(), FALSE) == FALSE) {
-		const auto errorCode = GetLastError();
-		LOG(("Update Error: could not copy '%1' to '%2', error code: %3"
-			).arg(updater.absoluteFilePath()).arg(curUpdater).arg(errorCode));
-		if (errorCode == ERROR_ACCESS_DENIED) { // we are in write-protected dir, like Program Files
+	const auto srcUpdaterW = updater.absoluteFilePath().toStdWString();
+	const auto dstUpdaterW = curUpdater.toStdWString();
+	auto copied = false;
+	auto copyError = DWORD(0);
+	for (auto attempt = 0; attempt < 30; ++attempt) {
+		if (CopyFile(srcUpdaterW.c_str(), dstUpdaterW.c_str(), FALSE) != FALSE) {
+			copied = true;
+			break;
+		}
+		copyError = GetLastError();
+		if (copyError == ERROR_ACCESS_DENIED) { // we are in write-protected dir, like Program Files
 			cSetWriteProtected(true);
 			return true;
-		} else {
-			ClearAll();
-			return false;
 		}
+		Sleep(100);
 	}
-	if (DeleteFile(updater.absoluteFilePath().toStdWString().c_str()) == FALSE) {
-		ClearAll();
-		return false;
+	if (!copied) {
+		LOG(("Update Error: could not copy '%1' to '%2', error code: %3"
+			).arg(updater.absoluteFilePath()).arg(curUpdater).arg(copyError));
+		return failUpdate();
+	}
+	auto deleted = false;
+	for (auto attempt = 0; attempt < 30; ++attempt) {
+		if (DeleteFile(srcUpdaterW.c_str()) != FALSE) {
+			deleted = true;
+			break;
+		}
+		Sleep(100);
+	}
+	if (!deleted) {
+		LOG(("Update Error: could not delete staged '%1', error code: %2"
+			).arg(updater.absoluteFilePath()).arg(GetLastError()));
+		return failUpdate();
 	}
 #elif defined Q_OS_MAC // Q_OS_WIN
 	QDir().mkpath(QFileInfo(curUpdater).absolutePath());
 	DEBUG_LOG(("Update Info: moving %1 to %2...").arg(updater.absoluteFilePath()).arg(curUpdater));
 	if (!objc_moveFile(updater.absoluteFilePath(), curUpdater)) {
-		ClearAll();
-		return false;
+		return failUpdate();
 	}
 #else // Q_OS_MAC
 	if (QFile::exists(curUpdater)
 		&& unlink(QFile::encodeName(curUpdater).constData())) {
 		DEBUG_LOG(("Update Error: could not unlink current Updater."));
-		ClearAll();
-		return false;
+		return failUpdate();
 	}
 	if (!linuxMoveFile(QFile::encodeName(updater.absoluteFilePath()).constData(), QFile::encodeName(curUpdater).constData())) {
 		DEBUG_LOG(("Update Error: could not copy new Updater."));
-		ClearAll();
-		return false;
+		return failUpdate();
 	}
 #endif // else for Q_OS_WIN || Q_OS_MAC
 
