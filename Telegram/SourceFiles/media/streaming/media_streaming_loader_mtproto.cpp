@@ -26,7 +26,7 @@ LoaderMtproto::LoaderMtproto(
 	const StorageFileLocation &location,
 	int64 size,
 	Data::FileOrigin origin)
-: DownloadMtprotoTask(owner, location, origin)
+: DownloadMtprotoTask(owner, location, origin, 0, true)
 , _size(size)
 , _api(&api().instance())
 , _statsTimer([=] { checkStats(); }) {

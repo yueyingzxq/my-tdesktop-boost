@@ -63,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
@@ -213,6 +214,11 @@ void BuildDataStorageSection(SectionBuilder &builder) {
 		}, askDownloadPath->lifetime());
 	}
 
+	const auto showBoostThreads = container
+		? container->lifetime().make_state<rpl::variable<bool>>(
+			Storage::DownloadBoostEnabled())
+		: nullptr;
+
 	const auto downloadBoost = builder.addButton({
 		.id = u"advanced/download_boost"_q,
 		.title = rpl::single(u"Network Boost"_q),
@@ -227,8 +233,65 @@ void BuildDataStorageSection(SectionBuilder &builder) {
 			return (checked != Storage::DownloadBoostEnabled());
 		}) | rpl::on_next([=](bool checked) {
 			Storage::SetDownloadBoostEnabled(checked);
+			if (showBoostThreads) {
+				*showBoostThreads = checked;
+			}
 		}, downloadBoost->lifetime());
 	}
+
+	builder.addControl({
+		.factory = [](not_null<Ui::VerticalLayout*> parent) {
+			auto wrap = object_ptr<Ui::VerticalLayout>(parent);
+			const auto inner = wrap.data();
+			const auto threads = inner->lifetime().make_state<rpl::variable<int>>(
+				Storage::DownloadBoostStreamThreads());
+			AddButtonWithLabel(
+				inner,
+				rpl::single(u"Playback Threads"_q),
+				threads->value() | rpl::map([](int value) {
+					return u"%1 Threads"_q.arg(value);
+				}),
+				st::autoDownloadLimitButton
+			)->setAttribute(Qt::WA_TransparentForMouseEvents);
+			const auto slider = inner->add(
+				object_ptr<Ui::MediaSlider>(inner, st::settingsScale),
+				style::margins(
+					st::settingsButtonNoIcon.padding.left(),
+					st::settingsCheckboxesSkip / 2,
+					st::settingsButtonNoIcon.padding.right(),
+					st::settingsCheckboxesSkip / 2));
+			slider->resize(st::settingsScale.seekSize);
+			constexpr auto kMin = Storage::kMinBoostStreamThreads;
+			constexpr auto kMax = Storage::kMaxBoostStreamThreads;
+			slider->setPseudoDiscrete(
+				kMax - kMin + 1,
+				[](int index) { return kMin + index; },
+				threads->current(),
+				[=](int value) {
+					*threads = value;
+				},
+				[=](int value) {
+					*threads = value;
+					Storage::SetDownloadBoostStreamThreads(value);
+				});
+			return object_ptr<Ui::RpWidget>(std::move(wrap));
+		},
+		.id = u"advanced/download_boost_threads"_q,
+		.title = rpl::single(u"Playback Threads"_q),
+		.align = style::al_justify,
+		.shown = showBoostThreads
+			? showBoostThreads->value()
+			: rpl::single(true) | rpl::type_erased,
+		.keywords = {
+			u"threads"_q,
+			u"stream"_q,
+			u"playback"_q,
+			u"boost"_q,
+			u"网络"_q,
+			u"线程"_q,
+			u"播放"_q,
+		},
+	});
 
 	builder.addSkip(st::settingsCheckboxesSkip);
 }
