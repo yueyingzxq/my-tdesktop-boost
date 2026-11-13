@@ -1321,8 +1321,8 @@ void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 		setDefaultStatus(checker);
 
 		update->setClickedCallback([] {
-			if (!Core::UpdaterDisabled()) {
-				Core::checkReadyUpdate();
+			if (!Core::UpdaterDisabled() && !Core::checkReadyUpdate()) {
+				return;
 			}
 			Core::Restart();
 		});
@@ -1691,8 +1691,8 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 		checker.start();
 	});
 	update->addClickHandler([] {
-		if (!Core::UpdaterDisabled()) {
-			Core::checkReadyUpdate();
+		if (!Core::UpdaterDisabled() && !Core::checkReadyUpdate()) {
+			return;
 		}
 		Core::Restart();
 	});

@@ -220,20 +220,118 @@ if (-not $downloadSuccess) {
 Write-Host "`n   [完成] 下载成功！" -ForegroundColor Green
 Write-Host ""
 
+# 辅助函数：检测文件是否已解除占用可独占写入
+function Test-FileUnlocked {
+    param([string]$FilePath)
+    if (-not (Test-Path -LiteralPath $FilePath)) {
+        return $true
+    }
+    try {
+        $fs = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $fs.Close()
+        $fs.Dispose()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# 辅助函数：获取当前安装目录下运行中的 Telegram / Updater 进程
+function Get-InstallDirProcesses {
+    param([string]$TargetDir)
+    $normalizedDir = [System.IO.Path]::GetFullPath($TargetDir).TrimEnd('\') + '\'
+    $all = Get-Process -Name "Telegram", "Updater" -ErrorAction SilentlyContinue
+    if (-not $all) {
+        return @()
+    }
+    $matched = @()
+    foreach ($proc in $all) {
+        $procPath = $null
+        try { $procPath = $proc.Path } catch {}
+        if (-not $procPath -or $procPath.StartsWith($normalizedDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $matched += $proc
+        }
+    }
+    return $matched
+}
+
+# 辅助函数：结束目标进程并等待内核句柄释放
+function Stop-TelegramProcessesAndWait {
+    param(
+        [string]$TargetDir,
+        [string]$TargetExe,
+        [int]$TimeoutSeconds = 15
+    )
+    $updaterExe = Join-Path $TargetDir "Updater.exe"
+    $procs = Get-InstallDirProcesses -TargetDir $TargetDir
+    $hadProcs = ($procs.Count -gt 0)
+    if ($hadProcs) {
+        Write-Host "   检测到 Telegram / Updater 正在运行，正在平稳关闭以替换程序文件..." -ForegroundColor Yellow
+        foreach ($p in $procs) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $remaining = Get-InstallDirProcesses -TargetDir $TargetDir
+        if ($remaining) {
+            foreach ($p in $remaining) {
+                try { & taskkill.exe /F /T /PID $p.Id 2>$null | Out-Null } catch {}
+            }
+        }
+        $exeUnlocked = Test-FileUnlocked -FilePath $TargetExe
+        $updUnlocked = Test-FileUnlocked -FilePath $updaterExe
+        if (-not $remaining -and $exeUnlocked -and $updUnlocked) {
+            if ($hadProcs) {
+                Write-Host "   已成功关闭旧进程并释放文件占用。" -ForegroundColor Gray
+            } else {
+                Write-Host "   Telegram 未在运行，准备就绪。" -ForegroundColor Gray
+            }
+            return $true
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    return $false
+}
+
+# 辅助函数：带占用重试的严格文件替换（失败返回错误信息而不伪造成功）
+function Copy-FileStrictWithRetry {
+    param(
+        [string]$SourcePath,
+        [string]$DestPath,
+        [string]$TargetDir,
+        [int]$MaxAttempts = 15
+    )
+    $lastError = $null
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        if (Test-FileUnlocked -FilePath $DestPath) {
+            try {
+                Copy-Item -LiteralPath $SourcePath -Destination $DestPath -Force -ErrorAction Stop
+                return @{ Success = $true; Error = $null }
+            } catch {
+                $lastError = $_.Exception.Message
+            }
+        } else {
+            $lastError = "目标文件正被其他进程占用: $DestPath"
+        }
+
+        if ($i -lt $MaxAttempts) {
+            $lingering = Get-InstallDirProcesses -TargetDir $TargetDir
+            foreach ($p in $lingering) {
+                try { & taskkill.exe /F /T /PID $p.Id 2>$null | Out-Null } catch {}
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    return @{ Success = $false; Error = $lastError }
+}
+
 # 步骤 3: 检查并平稳退出运行中的 Telegram
 Write-Host "[步骤 3/5] 检测 Telegram 运行状态..." -ForegroundColor Cyan
-$runningProcs = Get-Process Telegram -ErrorAction SilentlyContinue
-if ($runningProcs) {
-    Write-Host "   检测到 Telegram 正在运行，正在平稳关闭以替换程序文件..." -ForegroundColor Yellow
-    $runningProcs | Stop-Process -Force
-    $timeout = 10
-    while ((Get-Process Telegram -ErrorAction SilentlyContinue) -and ($timeout -gt 0)) {
-        Start-Sleep -Seconds 1
-        $timeout--
-    }
-    Write-Host "   已成功关闭旧进程。" -ForegroundColor Gray
-} else {
-    Write-Host "   Telegram 未在运行，准备就绪。" -ForegroundColor Gray
+$unlocked = Stop-TelegramProcessesAndWait -TargetDir $installDir -TargetExe $localExe -TimeoutSeconds 15
+if (-not $unlocked) {
+    Write-Host "   [警告] Telegram.exe 仍可能被其他进程或权限占用，稍后将尝试等待重试..." -ForegroundColor Yellow
 }
 Write-Host ""
 
@@ -250,8 +348,17 @@ if ($isZip) {
     # 查找提取出来的 Telegram.exe
     $extractedExe = Get-ChildItem -Path $extractFolder -Recurse -Filter "Telegram.exe" | Select-Object -First 1
     if ($extractedExe) {
-        Copy-Item -Path $extractedExe.FullName -Destination $localExe -Force
-        Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
+        $exeResult = Copy-FileStrictWithRetry -SourcePath $extractedExe.FullName -DestPath $localExe -TargetDir $installDir
+        if ($exeResult.Success) {
+            Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
+        } else {
+            Write-Host "   [错误] 无法替换 Telegram.exe：$($exeResult.Error)" -ForegroundColor Red
+            Write-Host "   请先完全退出正在运行的 Telegram（包括系统托盘），若曾以管理员权限运行请以管理员身份执行更新脚本后重试。" -ForegroundColor Yellow
+            Remove-Item $extractFolder -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+            Read-Host "按 Enter 键退出"
+            exit 1
+        }
     } else {
         Write-Host "   [错误] 压缩包内未找到 Telegram.exe！更新中止。" -ForegroundColor Red
         Remove-Item $extractFolder -Recurse -Force -ErrorAction SilentlyContinue
@@ -262,16 +369,37 @@ if ($isZip) {
     
     $extractedUpdater = Get-ChildItem -Path $extractFolder -Recurse -Filter "Updater.exe" | Select-Object -First 1
     if ($extractedUpdater) {
-        Copy-Item -Path $extractedUpdater.FullName -Destination (Join-Path $installDir "Updater.exe") -Force
-        Write-Host "   [更新] Updater.exe 已更新" -ForegroundColor Green
+        $updDest = Join-Path $installDir "Updater.exe"
+        $updResult = Copy-FileStrictWithRetry -SourcePath $extractedUpdater.FullName -DestPath $updDest -TargetDir $installDir -MaxAttempts 10
+        if ($updResult.Success) {
+            Write-Host "   [更新] Updater.exe 已更新" -ForegroundColor Green
+        } else {
+            Write-Host "   [警告] Updater.exe 替换失败（$($updResult.Error)），但不影响主程序使用。" -ForegroundColor Yellow
+        }
+    }
+
+    # 同步更新配套文档与 update.ps1 脚本（不覆盖正在等待返回偏移的 .bat 父脚本，非关键文件占用时不中断更新）
+    foreach ($assetName in @("README.md", "新手使用指南.txt", "QuickStart_Guide.txt", "update.ps1")) {
+        $extraFile = Get-ChildItem -Path $extractFolder -Recurse -Filter $assetName | Select-Object -First 1
+        if ($extraFile) {
+            Copy-Item -LiteralPath $extraFile.FullName -Destination (Join-Path $installDir $assetName) -Force -ErrorAction SilentlyContinue
+        }
     }
     
     # 清理临时文件
     Remove-Item $extractFolder -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
 } else {
-    Move-Item -Path $tempFile -Destination $localExe -Force
-    Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
+    $exeResult = Copy-FileStrictWithRetry -SourcePath $tempFile -DestPath $localExe -TargetDir $installDir
+    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+    if ($exeResult.Success) {
+        Write-Host "   [更新] Telegram.exe 已更新" -ForegroundColor Green
+    } else {
+        Write-Host "   [错误] 无法替换 Telegram.exe：$($exeResult.Error)" -ForegroundColor Red
+        Write-Host "   请先完全退出正在运行的 Telegram（包括系统托盘）后重试。" -ForegroundColor Yellow
+        Read-Host "按 Enter 键退出"
+        exit 1
+    }
 }
 
 # 保存更新记录
