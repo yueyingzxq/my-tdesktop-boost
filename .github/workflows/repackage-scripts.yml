@@ -1,0 +1,103 @@
+name: Fast Repackage Scripts.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/speed-boost
+    paths:
+      - 'update.ps1'
+      - '*.bat'
+      - '新手使用指南.txt'
+      - 'README.md'
+
+jobs:
+  repackage:
+    name: Repackage Release Zip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if C++ build is also triggered
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
+          else
+            CHANGED=$(git diff-tree --no-commit-id --name-only -m --first-parent -r "${{ github.sha }}")
+          fi
+          echo "Changed files:"
+          echo "$CHANGED"
+          NON_SCRIPT=false
+          while IFS= read -r f; do
+            case "$f" in
+              update.ps1|update.bat|一键更新.bat|新手使用指南.txt|README.md|.github/workflows/repackage-scripts.yml)
+                ;;
+              "")
+                ;;
+              *)
+                NON_SCRIPT=true
+                ;;
+            esac
+          done <<< "$CHANGED"
+          if [ "$NON_SCRIPT" = "true" ]; then
+            echo "Non-script files changed; Windows full build will handle packaging."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download existing binaries from latest-boost
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifact
+          gh release download latest-boost -p "Telegram.exe" -p "Updater.exe" -D artifact/
+
+      - name: Repackage Telegram_x64_qt6.zip
+        if: steps.check.outputs.skip == 'false'
+        shell: python3 {0}
+        run: |
+          import os, shutil, zipfile
+
+          artifact_dir = os.path.abspath('artifact')
+          doc_names = ['新手使用指南.txt', '一键更新.bat', 'update.bat', 'update.ps1', 'README.md']
+          for f in doc_names:
+              if os.path.isfile(f):
+                  shutil.copy2(f, os.path.join(artifact_dir, f))
+          if os.path.isfile('新手使用指南.txt'):
+              shutil.copy2('新手使用指南.txt', os.path.join(artifact_dir, 'QuickStart_Guide.txt'))
+
+          zip_path = os.path.join(artifact_dir, 'Telegram_x64_qt6.zip')
+          files_to_zip = [
+              f for f in os.listdir(artifact_dir)
+              if not f.lower().endswith('.zip') and os.path.isfile(os.path.join(artifact_dir, f))
+          ]
+          with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+              for f in files_to_zip:
+                  zf.write(os.path.join(artifact_dir, f), arcname=f)
+          print(f"Repackaged {zip_path} ({os.path.getsize(zip_path):,} bytes) with {len(files_to_zip)} files.")
+
+      - name: Update Release zip and script assets
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload latest-boost \
+            artifact/Telegram_x64_qt6.zip \
+            artifact/QuickStart_Guide.txt \
+            artifact/*.bat \
+            artifact/*.ps1 \
+            --clobber
