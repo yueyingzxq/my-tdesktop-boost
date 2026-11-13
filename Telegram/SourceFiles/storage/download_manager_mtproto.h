@@ -21,9 +21,14 @@ namespace Storage {
 
 // Base part size for MTProto downloads and streaming chunks (128 KB)
 constexpr auto kDownloadPartSize = 128 * 1024;
+constexpr auto kMinBoostStreamThreads = 2;
+constexpr auto kMaxBoostStreamThreads = 16;
+constexpr auto kDefaultBoostStreamThreads = 16;
 
 [[nodiscard]] bool DownloadBoostEnabled();
 void SetDownloadBoostEnabled(bool enabled);
+[[nodiscard]] int DownloadBoostStreamThreads();
+void SetDownloadBoostStreamThreads(int threads);
 [[nodiscard]] int DownloadPartSize();
 
 class DownloadMtprotoTask;
@@ -144,12 +149,14 @@ public:
 		not_null<DownloadManagerMtproto*> owner,
 		const StorageFileLocation &location,
 		Data::FileOrigin origin,
-		int partSize = 0);
+		int partSize = 0,
+		bool isStream = false);
 	DownloadMtprotoTask(
 		not_null<DownloadManagerMtproto*> owner,
 		MTP::DcId dcId,
 		const Location &location,
-		int partSize = 0);
+		int partSize = 0,
+		bool isStream = false);
 	virtual ~DownloadMtprotoTask();
 
 	[[nodiscard]] MTP::DcId dcId() const;
@@ -160,6 +167,9 @@ public:
 	[[nodiscard]] virtual bool readyToRequest() const = 0;
 	[[nodiscard]] int partSize() const {
 		return _partSize;
+	}
+	[[nodiscard]] bool isStream() const {
+		return _isStream;
 	}
 	void loadPart(int sessionIndex);
 	void removeSession(int sessionIndex);
@@ -290,6 +300,7 @@ private:
 	rpl::lifetime _nonPremiumLimitSubscription;
 
 	int _partSize = 0;
+	const bool _isStream = false;
 
 };
 

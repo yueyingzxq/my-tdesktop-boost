@@ -22,8 +22,14 @@ namespace Storage {
 base::options::toggle OptionDownloadBoost({
 	.id = "download-boost",
 	.name = "Network Boost",
-	.description = "开启后使用 16 通道并发连接、1MB 极限文件下载、流媒体 8MB 激进预载与 120 秒长连接保活；关闭则为官方保守标准档 (2~8 通道)。",
+	.description = "开启后文件下载默认使用 16 通道与 1MB 分块拉满速率，媒体播放支持自定义 2~16 并发线程、8MB 激进预载与 120 秒长连接保活；关闭则为官方保守标准档 (2~8 通道)。",
 	.defaultValue = true,
+});
+
+base::options::option<int> OptionDownloadBoostStreamThreads({
+	.id = "download-boost-stream-threads",
+	.name = "Playback Threads",
+	.description = "媒体在线播放与预载并发线程数 (2~16)；文件另存为下载默认始终使用 16 线程。",
 });
 
 bool DownloadBoostEnabled() {
@@ -32,6 +38,20 @@ bool DownloadBoostEnabled() {
 
 void SetDownloadBoostEnabled(bool enabled) {
 	OptionDownloadBoost.set(enabled);
+}
+
+int DownloadBoostStreamThreads() {
+	const auto value = OptionDownloadBoostStreamThreads.value();
+	return (value >= kMinBoostStreamThreads && value <= kMaxBoostStreamThreads)
+		? value
+		: kDefaultBoostStreamThreads;
+}
+
+void SetDownloadBoostStreamThreads(int threads) {
+	OptionDownloadBoostStreamThreads.set(std::clamp(
+		threads,
+		kMinBoostStreamThreads,
+		kMaxBoostStreamThreads));
 }
 
 int DownloadPartSize() {
@@ -220,18 +240,33 @@ bool DownloadManagerMtproto::trySendNextPart(MTP::DcId dcId, Queue &queue) {
 	if (!task) {
 		return false;
 	}
-	const auto &balanceData = _balanceData[dcId];
-	const auto &sessions = balanceData.sessions;
+	auto &balanceData = _balanceData[dcId];
+	auto &sessions = balanceData.sessions;
+	if (const auto minSessions = StartSessionsCount(); int(sessions.size()) < minSessions) {
+		sessions.resize(minSessions);
+	}
+	const auto startWaited = StartWaitedInSession();
+	for (auto &session : sessions) {
+		if (session.maxWaitedAmount < startWaited) {
+			session.maxWaitedAmount = startWaited;
+		}
+	}
 	const auto partSize = task->partSize();
 	const auto maxWaited = MaxWaitedInSession();
+	const auto sessionLimit = DownloadBoostEnabled()
+		? (task->isStream()
+			? std::clamp(DownloadBoostStreamThreads(), 1, int(sessions.size()))
+			: int(sessions.size()))
+		: std::min(int(sessions.size()), MaxSessionsCount());
+	const auto till = begin(sessions) + sessionLimit;
 	const auto bestIndex = [&] {
 		const auto proj = [&](const DcSessionBalanceData &data) {
 			return (data.requested < data.maxWaitedAmount)
 				? data.requested
 				: maxWaited;
 		};
-		const auto j = ranges::min_element(sessions, ranges::less(), proj);
-		return (j->requested + partSize <= j->maxWaitedAmount)
+		const auto j = ranges::min_element(begin(sessions), till, ranges::less(), proj);
+		return (j != till && j->requested + partSize <= j->maxWaitedAmount)
 			? (j - begin(sessions))
 			: -1;
 	}();
@@ -451,6 +486,10 @@ void DownloadManagerMtproto::killSessions(MTP::DcId dcId) {
 			sessions[j] = DcSessionBalanceData();
 			api().instance().stopSession(MTP::downloadDcId(dcId, j));
 		}
+		sessions.resize(std::clamp(
+			int(sessions.size()),
+			StartSessionsCount(),
+			MaxSessionsCount()));
 		dc.sessions = base::take(sessions);
 	}
 }
@@ -459,23 +498,27 @@ DownloadMtprotoTask::DownloadMtprotoTask(
 	not_null<DownloadManagerMtproto*> owner,
 	const StorageFileLocation &location,
 	Data::FileOrigin origin,
-	int partSize)
+	int partSize,
+	bool isStream)
 : _owner(owner)
 , _dcId(location.dcId())
 , _location({ location })
 , _origin(origin)
-, _partSize(partSize ? partSize : Storage::DownloadPartSize()) {
+, _partSize(partSize ? partSize : Storage::DownloadPartSize())
+, _isStream(isStream) {
 }
 
 DownloadMtprotoTask::DownloadMtprotoTask(
 	not_null<DownloadManagerMtproto*> owner,
 	MTP::DcId dcId,
 	const Location &location,
-	int partSize)
+	int partSize,
+	bool isStream)
 : _owner(owner)
 , _dcId(dcId)
 , _location(location)
-, _partSize(partSize ? partSize : Storage::DownloadPartSize()) {
+, _partSize(partSize ? partSize : Storage::DownloadPartSize())
+, _isStream(isStream) {
 }
 
 DownloadMtprotoTask::~DownloadMtprotoTask() {

@@ -93,7 +93,9 @@ VideoPreload::VideoPreload(
 , DownloadMtprotoTask(
 	&video->session().downloader(),
 	video->videoPreloadLocation(),
-	origin)
+	origin,
+	0,
+	true)
 , _video(video)
 , _full(video->size) {
 	if (Can(video)) {
