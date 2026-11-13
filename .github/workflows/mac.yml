@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - feature/speed-boost
-      - dev
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -13,6 +12,8 @@ on:
       - 'changelog.txt'
       - 'LEGAL'
       - 'LICENSE'
+      - '*.bat'
+      - '*.ps1'
       - '.github/**'
       - '!.github/workflows/mac.yml'
       - 'lib/xdg/**'
@@ -35,6 +36,8 @@ on:
       - 'changelog.txt'
       - 'LEGAL'
       - 'LICENSE'
+      - '*.bat'
+      - '*.ps1'
       - '.github/**'
       - '!.github/workflows/mac.yml'
       - 'lib/xdg/**'
@@ -93,8 +96,8 @@ jobs:
       - name: First set up.
         run: |
           libs="ada-url ffmpeg@6 jpeg-xl libavif libheif minizip openal-soft openh264 openssl opus qtbase qtimageformats qtshadertools qtsvg xz"
-          brew update
-          brew upgrade || true
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
           brew install autoconf automake boost cmake libtool ninja pkg-config python $libs
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake || true
@@ -210,7 +213,7 @@ jobs:
           cd tg_owt
 
           cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tg_owt
-          cmake --build build
+          cmake --build build --parallel
           cmake --install build
 
       - name: TDE2E cache.
@@ -231,7 +234,7 @@ jobs:
           git reset --hard FETCH_HEAD
 
           cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tde2e -DTD_E2E_ONLY=ON
-          cmake --build build
+          cmake --build build --parallel
           cmake --install build
 
       - name: Telegram Desktop build.
@@ -253,7 +256,7 @@ jobs:
             exit 1
           }
 
-          cmake --build build
+          cmake --build build --target Telegram --parallel
           macdeployqt build/Telegram.app || true
           codesign --force --deep -s - build/Telegram.app || true
 
