@@ -746,6 +746,8 @@ PRIVATE
     data/data_history_messages.cpp
     data/data_history_messages.h
     data/data_lastseen_status.h
+    data/data_local_pins.cpp
+    data/data_local_pins.h
     data/data_location.cpp
     data/data_location.h
     data/data_media_preload.cpp

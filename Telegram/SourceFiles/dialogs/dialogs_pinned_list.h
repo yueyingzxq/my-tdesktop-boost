@@ -45,6 +45,7 @@ public:
 		const QVector<MTPint> &list);
 	void applyList(const std::vector<not_null<History*>> &list);
 	void reorder(Key key1, Key key2);
+	void applyOrderByRank(const Fn<int(Key)> &rank);
 
 	const std::vector<Key> &order() const {
 		return _data;

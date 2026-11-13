@@ -34,7 +34,7 @@ void PinnedList::setLimit(int limit) {
 }
 
 void PinnedList::addPinned(Key key) {
-	Expects(key.entry()->folderKnown());
+	Expects(key.entry()->folderKnown() || _filterId != 0);
 
 	addPinnedGetPosition(key);
 }
@@ -173,6 +173,23 @@ void PinnedList::reorder(Key key1, Key key2) {
 	std::swap(_data[index1], _data[index2]);
 	key1.entry()->cachePinnedIndex(_filterId, index2 + 1);
 	key2.entry()->cachePinnedIndex(_filterId, index1 + 1);
+}
+
+void PinnedList::applyOrderByRank(const Fn<int(Key)> &rank) {
+	if (_data.size() < 2) {
+		return;
+	}
+	auto sorted = _data;
+	std::stable_sort(sorted.begin(), sorted.end(), [&](Key a, Key b) {
+		return rank(a) < rank(b);
+	});
+	if (sorted == _data) {
+		return;
+	}
+	_data = std::move(sorted);
+	for (auto i = 0; i < int(size(_data)); ++i) {
+		_data[i].entry()->cachePinnedIndex(_filterId, i + 1);
+	}
 }
 
 } // namespace Dialogs

@@ -115,6 +115,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_user.h"
 #include "data/data_saved_messages.h"
+#include "data/data_local_pins.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_histories.h"
 #include "data/data_chat_filters.h"
@@ -443,8 +444,41 @@ void TogglePinnedThread(
 		return;
 	}
 
+	const auto scopeKey = Data::LocalPinnedChats::ScopeKeyForEntry(
+		entry,
+		FilterId());
+	const auto currentOrder = [&]() -> const std::vector<Dialogs::Key> & {
+		if (const auto topic = entry->asTopic()) {
+			return owner->pinnedChatsOrder(topic->forum());
+		} else if (const auto sublist = entry->asSublist()) {
+			return owner->pinnedChatsOrder(&owner->savedMessages());
+		}
+		return owner->pinnedChatsOrder(entry->folder());
+	};
+	const auto wasLocalOnly = !isPinned
+		&& owner->localPins().isLocallyPinned(scopeKey, entry);
+
 	owner->setChatPinned(entry, FilterId(), isPinned);
+	if (isPinned) {
+		if (Data::UnlimitedLocalPinsEnabled()) {
+			owner->localPins().recordPinned(scopeKey, entry, currentOrder());
+		}
+	} else {
+		owner->localPins().removePin(scopeKey, entry, currentOrder());
+	}
+
+	const auto weakEntry = base::make_weak(entry);
 	if (const auto history = entry->asHistory()) {
+		if (isPinned) {
+			controller->content()->dialogsToUp();
+		}
+		if (wasLocalOnly) {
+			owner->notifyPinnedDialogsOrderUpdated();
+			if (onToggled) {
+				onToggled();
+			}
+			return;
+		}
 		const auto flags = isPinned
 			? MTPmessages_ToggleDialogPin::Flag::f_pinned
 			: MTPmessages_ToggleDialogPin::Flag(0);
@@ -455,40 +489,81 @@ void TogglePinnedThread(
 		owner->session().api().request(MTPmessages_ToggleDialogPin(
 			MTP_flags(flags),
 			peer
-		)).done([=] {
+		)).done(crl::guard(&owner->session(), [=] {
+			if (isPinned) {
+				if (const auto strong = weakEntry.get()) {
+					owner->localPins().markCloudSynced(scopeKey, strong);
+				}
+			}
 			owner->notifyPinnedDialogsOrderUpdated();
 			if (onToggled) {
 				onToggled();
 			}
-		}).send();
-		if (isPinned) {
-			controller->content()->dialogsToUp();
-		}
+		})).fail(crl::guard(&owner->session(), [=] {
+			owner->notifyPinnedDialogsOrderUpdated();
+			if (onToggled) {
+				onToggled();
+			}
+		})).send();
 	} else if (const auto topic = entry->asTopic()) {
+		if (wasLocalOnly) {
+			owner->notifyPinnedDialogsOrderUpdated();
+			if (onToggled) {
+				onToggled();
+			}
+			return;
+		}
 		const auto peer = topic->peer();
 		owner->session().api().request(MTPmessages_UpdatePinnedForumTopic(
 			peer->input(),
 			MTP_int(topic->rootId()),
 			MTP_bool(isPinned)
-		)).done([=](const MTPUpdates &result) {
+		)).done(crl::guard(&owner->session(), [=](const MTPUpdates &result) {
+			if (isPinned) {
+				if (const auto strong = weakEntry.get()) {
+					owner->localPins().markCloudSynced(scopeKey, strong);
+				}
+			}
 			owner->session().api().applyUpdates(result);
 			if (onToggled) {
 				onToggled();
 			}
-		}).send();
+		})).fail(crl::guard(&owner->session(), [=] {
+			owner->notifyPinnedDialogsOrderUpdated();
+			if (onToggled) {
+				onToggled();
+			}
+		})).send();
 	} else if (const auto sublist = entry->asSublist()) {
+		if (wasLocalOnly) {
+			owner->notifyPinnedDialogsOrderUpdated();
+			if (onToggled) {
+				onToggled();
+			}
+			return;
+		}
 		const auto flags = isPinned
 			? MTPmessages_ToggleSavedDialogPin::Flag::f_pinned
 			: MTPmessages_ToggleSavedDialogPin::Flag(0);
 		owner->session().api().request(MTPmessages_ToggleSavedDialogPin(
 			MTP_flags(flags),
 			MTP_inputDialogPeer(sublist->sublistPeer()->input())
-		)).done([=] {
+		)).done(crl::guard(&owner->session(), [=] {
+			if (isPinned) {
+				if (const auto strong = weakEntry.get()) {
+					owner->localPins().markCloudSynced(scopeKey, strong);
+				}
+			}
 			owner->notifyPinnedDialogsOrderUpdated();
 			if (onToggled) {
 				onToggled();
 			}
-		}).send();
+		})).fail(crl::guard(&owner->session(), [=] {
+			owner->notifyPinnedDialogsOrderUpdated();
+			if (onToggled) {
+				onToggled();
+			}
+		})).send();
 		//if (isPinned) {
 		//	controller->content()->dialogsToUp();
 		//}
@@ -4660,10 +4735,35 @@ void TogglePinnedThread(
 		return;
 	}
 
+	const auto scopeKey = Data::LocalPinnedChats::ScopeKey(filterId);
+	const auto wasLocalOnly = !isPinned
+		&& owner->localPins().isLocallyPinned(scopeKey, history);
+
 	owner->setChatPinned(history, filterId, isPinned);
-	Api::SaveNewFilterPinned(&owner->session(), filterId);
+	if (isPinned) {
+		if (Data::UnlimitedLocalPinsEnabled()) {
+			owner->localPins().recordPinned(
+				scopeKey,
+				history,
+				owner->pinnedChatsOrder(filterId));
+		}
+	} else {
+		owner->localPins().removePin(
+			scopeKey,
+			history,
+			owner->pinnedChatsOrder(filterId));
+	}
+	if (!wasLocalOnly) {
+		Api::SaveNewFilterPinned(&owner->session(), filterId);
+	} else {
+		owner->chatsFilters().applyUpdatedPinned(
+			filterId,
+			owner->pinnedChatsOrder(filterId));
+	}
 	if (isPinned) {
 		controller->content()->dialogsToUp();
+	}
+	if (isPinned || wasLocalOnly) {
 		if (onToggled) {
 			onToggled();
 		}

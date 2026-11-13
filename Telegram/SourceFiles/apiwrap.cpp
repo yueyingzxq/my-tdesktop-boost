@@ -58,6 +58,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum.h"
 #include "data/data_message_reaction_id.h"
 #include "data/data_premium_limits.h"
+#include "data/data_local_pins.h"
 #include "data/data_saved_messages.h"
 #include "data/data_saved_music.h"
 #include "data/data_saved_sublist.h"
@@ -409,6 +410,18 @@ void ApiWrap::checkFilterInvite(
 
 void ApiWrap::savePinnedOrder(Data::Folder *folder) {
 	const auto &order = _session->data().pinnedChatsOrder(folder);
+	const auto scopeKey = Data::LocalPinnedChats::ScopeKey(folder);
+	auto &localPins = _session->data().localPins();
+	localPins.updateOrder(scopeKey, order);
+	const auto cloudList = Data::UnlimitedLocalPinsEnabled()
+		? localPins.cloudOrder(
+			scopeKey,
+			order,
+			_session->data().pinnedChatsLimit(folder))
+		: order;
+	if (cloudList.empty()) {
+		return;
+	}
 	const auto input = [](Dialogs::Key key) {
 		if (const auto history = key.history()) {
 			if (const auto channel = history->peer->asChannel()
@@ -422,9 +435,9 @@ void ApiWrap::savePinnedOrder(Data::Folder *folder) {
 		Unexpected("Key type in pinnedDialogsOrder().");
 	};
 	auto peers = QVector<MTPInputDialogPeer>();
-	peers.reserve(order.size());
+	peers.reserve(cloudList.size());
 	ranges::transform(
-		order,
+		cloudList,
 		ranges::back_inserter(peers),
 		input);
 	request(MTPmessages_ReorderPinnedDialogs(
@@ -436,6 +449,18 @@ void ApiWrap::savePinnedOrder(Data::Folder *folder) {
 
 void ApiWrap::savePinnedOrder(not_null<Data::Forum*> forum) {
 	const auto &order = _session->data().pinnedChatsOrder(forum);
+	const auto scopeKey = Data::LocalPinnedChats::ScopeKey(forum);
+	auto &localPins = _session->data().localPins();
+	localPins.updateOrder(scopeKey, order);
+	const auto cloudList = Data::UnlimitedLocalPinsEnabled()
+		? localPins.cloudOrder(
+			scopeKey,
+			order,
+			_session->data().pinnedChatsLimit(forum))
+		: order;
+	if (cloudList.empty()) {
+		return;
+	}
 	const auto input = [](Dialogs::Key key) {
 		if (const auto topic = key.topic()) {
 			return MTP_int(topic->rootId().bare);
@@ -443,9 +468,9 @@ void ApiWrap::savePinnedOrder(not_null<Data::Forum*> forum) {
 		Unexpected("Key type in pinnedDialogsOrder().");
 	};
 	auto topics = QVector<MTPint>();
-	topics.reserve(order.size());
+	topics.reserve(cloudList.size());
 	ranges::transform(
-		order,
+		cloudList,
 		ranges::back_inserter(topics),
 		input);
 	request(MTPmessages_ReorderPinnedForumTopics(
@@ -462,6 +487,18 @@ void ApiWrap::savePinnedOrder(not_null<Data::SavedMessages*> saved) {
 		return;
 	}
 	const auto &order = _session->data().pinnedChatsOrder(saved);
+	const auto scopeKey = Data::LocalPinnedChats::ScopeKey(saved);
+	auto &localPins = _session->data().localPins();
+	localPins.updateOrder(scopeKey, order);
+	const auto cloudList = Data::UnlimitedLocalPinsEnabled()
+		? localPins.cloudOrder(
+			scopeKey,
+			order,
+			_session->data().pinnedChatsLimit(saved))
+		: order;
+	if (cloudList.empty()) {
+		return;
+	}
 	const auto input = [](Dialogs::Key key) {
 		if (const auto sublist = key.sublist()) {
 			return MTP_inputDialogPeer(sublist->sublistPeer()->input());
@@ -469,9 +506,9 @@ void ApiWrap::savePinnedOrder(not_null<Data::SavedMessages*> saved) {
 		Unexpected("Key type in pinnedDialogsOrder().");
 	};
 	auto peers = QVector<MTPInputDialogPeer>();
-	peers.reserve(order.size());
+	peers.reserve(cloudList.size());
 	ranges::transform(
-		order,
+		cloudList,
 		ranges::back_inserter(peers),
 		input);
 	request(MTPmessages_ReorderPinnedSavedDialogs(
@@ -1141,6 +1178,7 @@ mtpRequestId ApiWrap::sendPinnedDialogsRequest(
 				folder,
 				data.vmessages().v,
 				data.vdialogs().v);
+			_session->data().restoreLocalPinnedChats(folder);
 			_session->data().chatsListChanged(folder);
 			_session->data().notifyPinnedDialogsOrderUpdated();
 		});

@@ -78,6 +78,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_icons.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_saved_messages.h"
+#include "data/data_local_pins.h"
 #include "data/data_saved_music.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_stories.h"
@@ -307,6 +308,24 @@ void EnumerateStaticMediaPhotos(
 	}
 }
 
+[[nodiscard]] rpl::producer<int> MakeMaxPinnedLimitValue(
+		not_null<Main::Session*> session,
+		Fn<int()> official) {
+	const auto peak = std::make_shared<int>(0);
+	return rpl::combine(
+		session->appConfig().value(),
+		UnlimitedLocalPinsEnabledValue()
+	) | rpl::map([=](rpl::empty_value, bool unlimited) {
+		const auto next = unlimited
+			? kUnlimitedLocalPinsLimit
+			: official();
+		// Never shrink PinnedList limit mid-session on toggle-off so already
+		// visible locally-pinned chats stay until restart.
+		*peak = std::max(*peak, next);
+		return *peak;
+	}) | rpl::distinct_until_changed();
+}
+
 } // namespace
 
 Session::Session(not_null<Main::Session*> session)
@@ -350,6 +369,7 @@ Session::Session(not_null<Main::Session*> session)
 , _stories(std::make_unique<Stories>(this))
 , _savedMusic(std::make_unique<SavedMusic>(this))
 , _savedMessages(std::make_unique<SavedMessages>(this))
+, _localPins(std::make_unique<LocalPinnedChats>(this))
 , _chatbots(std::make_unique<Chatbots>(this))
 , _businessInfo(std::make_unique<BusinessInfo>(this))
 , _shortcutMessages(std::make_unique<ShortcutMessages>(this)) {
@@ -1712,7 +1732,12 @@ void Session::deleteConversationLocally(not_null<PeerData*> peer) {
 	};
 	if (const auto history = historyLoaded(peer)) {
 		if (history->folderKnown()) {
+			const auto folder = history->folder();
 			setChatPinned(history, FilterId(), false);
+			_localPins->removePin(
+				LocalPinnedChats::ScopeKey(folder),
+				history,
+				pinnedChatsOrder(folder));
 		}
 		removeChatListEntry(history);
 		history->clearFolder();
@@ -2768,15 +2793,58 @@ void Session::setPinnedFromEntryList(Dialogs::Key key, bool pinned) {
 
 	const auto list = chatsListFor(key.entry())->pinned();
 	if (pinned) {
+		_localPins->markCloudSynced(key);
 		list->addPinned(key);
+	} else if (UnlimitedLocalPinsEnabled() && _localPins->isLocallyPinned(key)) {
+		list->addPinned(key);
+		_localPins->applyPreferredOrderForEntry(key);
 	} else {
 		list->setPinned(key, false);
 	}
 }
 
+void Session::applyCloudPinUpdate(Dialogs::Key key, bool pinned) {
+	Expects(key.entry()->folderKnown());
+
+	if (pinned) {
+		_localPins->markCloudSynced(key);
+		setChatPinned(key, FilterId(), true);
+	} else if (UnlimitedLocalPinsEnabled() && _localPins->isLocallyPinned(key)) {
+		return;
+	} else {
+		setChatPinned(key, FilterId(), false);
+		const auto scopeKey = LocalPinnedChats::ScopeKeyForEntry(
+			key,
+			FilterId());
+		if (!scopeKey.isEmpty()) {
+			_localPins->removePin(
+				scopeKey,
+				key,
+				chatsListFor(key.entry())->pinned()->order());
+		}
+	}
+}
+
+void Session::restoreLocalPinnedChats(Data::Folder *folder) {
+	_localPins->restore(folder);
+}
+
+void Session::restoreLocalPinnedChats(FilterId filterId) {
+	_localPins->restore(filterId);
+}
+
+void Session::restoreLocalPinnedChats(not_null<Data::Forum*> forum) {
+	_localPins->restore(forum);
+}
+
+void Session::restoreLocalPinnedChats(not_null<Data::SavedMessages*> saved) {
+	_localPins->restore(saved);
+}
+
 void Session::applyPinnedChats(
 		Data::Folder *folder,
 		const QVector<MTPDialogPeer> &list) {
+	const auto scopeKey = LocalPinnedChats::ScopeKey(folder);
 	for (const auto &peer : list) {
 		peer.match([&](const MTPDdialogPeer &data) {
 			const auto history = this->history(peerFromMTP(data.vpeer()));
@@ -2785,25 +2853,40 @@ void Session::applyPinnedChats(
 			} else {
 				history->clearFolder();
 			}
+			_localPins->markCloudSynced(scopeKey, history);
 		}, [&](const MTPDdialogPeerFolder &data) {
 			if (folder) {
 				LOG(("API Error: Nested folders detected."));
+			} else {
+				_localPins->markCloudSynced(
+					scopeKey,
+					this->folder(data.vfolder_id().v));
 			}
 		}, [&](const MTPDdialogPeerCommunity &data) {
 			const auto channelId = ChannelId(data.vcommunity_id().v);
 			if (const auto channel = channelLoaded(channelId)) {
-				this->history(channel)->clearFolder();
+				const auto history = this->history(channel);
+				history->clearFolder();
+				_localPins->markCloudSynced(scopeKey, history);
 			}
 		});
 	}
 	chatsList(folder)->pinned()->applyList(this, list);
+	_localPins->restore(folder);
 	notifyPinnedDialogsOrderUpdated();
 }
 
 void Session::applyPinnedTopics(
 		not_null<Data::Forum*> forum,
 		const QVector<MTPint> &list) {
+	const auto scopeKey = LocalPinnedChats::ScopeKey(forum);
+	for (const auto &topicId : list) {
+		if (const auto topic = forum->topicFor(topicId.v)) {
+			_localPins->markCloudSynced(scopeKey, topic);
+		}
+	}
 	forum->topicsList()->pinned()->applyList(forum, list);
+	_localPins->restore(forum);
 	notifyPinnedDialogsOrderUpdated();
 }
 
@@ -2885,12 +2968,17 @@ void Session::checkPinnedCommunityLoaded(not_null<ChannelData*> channel) {
 }
 
 bool Session::pinnedCanPin(not_null<Dialogs::Entry*> entry) const {
-	if ([[maybe_unused]] const auto sublist = entry->asSublist()) {
+	if (const auto sublist = entry->asSublist()) {
 		if (sublist->parentChat()) {
 			return false;
 		}
+		if (UnlimitedLocalPinsEnabled()) {
+			return true;
+		}
 		const auto saved = &savedMessages();
 		return pinnedChatsOrder(saved).size() < pinnedChatsLimit(saved);
+	} else if (UnlimitedLocalPinsEnabled()) {
+		return true;
 	} else if (const auto topic = entry->asTopic()) {
 		const auto forum = topic->forum();
 		return pinnedChatsOrder(forum).size() < pinnedChatsLimit(forum);
@@ -2905,6 +2993,9 @@ bool Session::pinnedCanPin(
 		not_null<History*> history) const {
 	Expects(filterId != 0);
 
+	if (UnlimitedLocalPinsEnabled()) {
+		return true;
+	}
 	const auto &list = chatsFilters().list();
 	const auto i = ranges::find(list, filterId, &Data::ChatFilter::id);
 	return (i == end(list))
@@ -2939,12 +3030,10 @@ int Session::pinnedChatsLimit(not_null<Data::SavedMessages*> saved) const {
 
 rpl::producer<int> Session::maxPinnedChatsLimitValue(
 		Data::Folder *folder) const {
-	// Premium limit from appconfig.
-	// We always use premium limit in the MainList limit producer,
-	// because it slices the list to that limit. We don't want to slice
-	// premium-ly added chats from the pinned list because of sync issues.
-	return _session->appConfig().value(
-	) | rpl::map([folder, limits = Data::PremiumLimits(_session)] {
+	return MakeMaxPinnedLimitValue(_session, [
+		folder,
+		limits = Data::PremiumLimits(_session)
+	] {
 		return folder
 			? limits.dialogsFolderPinnedPremium()
 			: limits.dialogsPinnedPremium();
@@ -2953,20 +3042,18 @@ rpl::producer<int> Session::maxPinnedChatsLimitValue(
 
 rpl::producer<int> Session::maxPinnedChatsLimitValue(
 		FilterId filterId) const {
-	// Premium limit from appconfig.
-	// We always use premium limit in the MainList limit producer,
-	// because it slices the list to that limit. We don't want to slice
-	// premium-ly added chats from the pinned list because of sync issues.
-	return _session->appConfig().value(
-	) | rpl::map([limits = Data::PremiumLimits(_session)] {
+	return MakeMaxPinnedLimitValue(_session, [
+		limits = Data::PremiumLimits(_session)
+	] {
 		return limits.dialogFiltersChatsPremium();
 	});
 }
 
 rpl::producer<int> Session::maxPinnedChatsLimitValue(
 		not_null<Data::Forum*> forum) const {
-	return _session->appConfig().value(
-	) | rpl::map([limits = Data::PremiumLimits(_session)] {
+	return MakeMaxPinnedLimitValue(_session, [
+		limits = Data::PremiumLimits(_session)
+	] {
 		return limits.topicsPinnedCurrent();
 	});
 }
@@ -2976,12 +3063,9 @@ rpl::producer<int> Session::maxPinnedChatsLimitValue(
 	if (saved->parentChat()) {
 		return rpl::single(0);
 	}
-	// Premium limit from appconfig.
-	// We always use premium limit in the MainList limit producer,
-	// because it slices the list to that limit. We don't want to slice
-	// premium-ly added chats from the pinned list because of sync issues.
-	return _session->appConfig().value(
-	) | rpl::map([limits = Data::PremiumLimits(_session)] {
+	return MakeMaxPinnedLimitValue(_session, [
+		limits = Data::PremiumLimits(_session)
+	] {
 		return limits.savedSublistsPinnedPremium();
 	});
 }
