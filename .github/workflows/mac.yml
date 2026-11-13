@@ -122,7 +122,7 @@ jobs:
 
       - name: Rust libraries cache.
         id: cache-tdesktop-rust
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.LibrariesPath }}/local/tdesktop_rust
           key: ${{ runner.OS }}-tdesktop-rust-${{ env.TLOTTIE }}-${{ env.WALLET_ENGINE }}-${{ env.RUST_PATCHES }}-${{ env.RUST_TOOLCHAIN }}-${{ env.CACHE_KEY }}
@@ -182,7 +182,7 @@ jobs:
 
       - name: RNNoise cache.
         id: cache-rnnoise
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.LibrariesPath }}/local/rnnoise
           key: ${{ runner.OS }}-rnnoise-${{ env.RNNOISE }}-${{ env.CACHE_KEY }}
@@ -200,7 +200,7 @@ jobs:
 
       - name: WebRTC cache.
         id: cache-webrtc
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.LibrariesPath }}/local/tg_owt
           key: ${{ runner.OS }}-webrtc-${{ env.WEBRTC }}-${{ env.CACHE_KEY }}
@@ -218,7 +218,7 @@ jobs:
 
       - name: TDE2E cache.
         id: cache-tde2e
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.LibrariesPath }}/local/tde2e
           key: ${{ runner.OS }}-tde2e-${{ env.TDE2E }}-${{ env.CACHE_KEY }}
