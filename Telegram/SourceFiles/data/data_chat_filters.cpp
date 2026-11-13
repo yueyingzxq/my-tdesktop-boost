@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_folder.h"
 #include "data/data_histories.h"
+#include "data/data_local_pins.h"
 #include "dialogs/dialogs_main_list.h"
 #include "history/history.h"
 #include "history/history_unread_things.h"
@@ -780,6 +781,10 @@ bool ChatFilters::applyChange(ChatFilter &filter, ChatFilter &&updated) {
 		const auto filterList = _owner->chatsFilters().chatsList(id);
 		filterList->pinned()->applyList(filter.pinned());
 	}
+	if ((pinnedChanged || rulesChanged)
+		&& ranges::contains(_list, id, &ChatFilter::id)) {
+		_owner->restoreLocalPinnedChats(id);
+	}
 	if (chatlistChanged) {
 		_isChatlistChanged.fire_copy(id);
 	}
@@ -840,7 +845,9 @@ const ChatFilter &ChatFilters::applyUpdatedPinned(
 	const auto i = ranges::find(_list, id, &ChatFilter::id);
 	Assert(i != end(_list));
 
-	const auto limit = _owner->pinnedChatsLimit(id);
+	const auto limit = UnlimitedLocalPinsEnabled()
+		? kUnlimitedLocalPinsLimit
+		: _owner->pinnedChatsLimit(id);
 	auto always = i->always();
 	auto pinned = std::vector<not_null<History*>>();
 	pinned.reserve(dialogs.size());

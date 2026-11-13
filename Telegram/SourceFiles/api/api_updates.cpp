@@ -2639,7 +2639,7 @@ void Updates::feedUpdate(const MTPUpdate &update) {
 		if (const auto peer = session().data().peerLoaded(peerId)) {
 			const auto rootId = d.vtopic_id().v;
 			if (const auto topic = peer->forumTopicFor(rootId)) {
-				session().data().setChatPinned(topic, 0, d.is_pinned());
+				session().data().applyCloudPinUpdate(topic, d.is_pinned());
 			} else if (const auto forum = peer->forum()) {
 				forum->requestTopic(rootId);
 			}

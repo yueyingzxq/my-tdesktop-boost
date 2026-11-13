@@ -367,7 +367,7 @@ void Folder::applyPinnedUpdate(const MTPDupdateDialogPinned &data) {
 	if (folderId != 0) {
 		LOG(("API Error: Nested folders detected."));
 	}
-	owner().setChatPinned(this, FilterId(), data.is_pinned());
+	owner().applyCloudPinUpdate(this, data.is_pinned());
 }
 
 int Folder::fixedOnTopIndex() const {

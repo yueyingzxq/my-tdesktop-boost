@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_chat_filters.h"
+#include "data/data_local_pins.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "history/history.h"
@@ -871,13 +872,65 @@ void SaveNewFilterPinned(
 		not_null<Main::Session*> session,
 		FilterId filterId) {
 	const auto &order = session->data().pinnedChatsOrder(filterId);
+	const auto scopeKey = Data::LocalPinnedChats::ScopeKey(filterId);
+	auto &localPins = session->data().localPins();
+	localPins.updateOrder(scopeKey, order);
 	auto &filters = session->data().chatsFilters();
 	const auto &filter = filters.applyUpdatedPinned(filterId, order);
+	const auto officialLimit = session->data().pinnedChatsLimit(filterId);
+	const auto cloudTl = [&] {
+		if (!Data::UnlimitedLocalPinsEnabled()
+			|| (int(filter.always().size()) <= officialLimit)) {
+			return filter.tl();
+		}
+		auto cloudAlways = base::flat_set<not_null<History*>>();
+		auto cloudPinned = std::vector<not_null<History*>>();
+		for (const auto &history : filter.always()) {
+			if (!localPins.isLocallyPinned(scopeKey, history)
+				&& (int(cloudAlways.size()) < officialLimit)) {
+				cloudAlways.insert(history);
+			}
+		}
+		for (const auto &history : filter.pinned()) {
+			if (!localPins.isLocallyPinned(scopeKey, history)) {
+				if (cloudAlways.contains(history)) {
+					cloudPinned.push_back(history);
+				} else if (int(cloudAlways.size()) < officialLimit) {
+					cloudAlways.insert(history);
+					cloudPinned.push_back(history);
+				}
+			}
+		}
+		return Data::ChatFilter(
+			filter.id(),
+			filter.title(),
+			filter.iconEmoji(),
+			filter.colorIndex(),
+			filter.flags(),
+			std::move(cloudAlways),
+			std::move(cloudPinned),
+			filter.never()).tl();
+	}();
+	auto syncedKeys = std::vector<Dialogs::Key>();
+	if (!Data::UnlimitedLocalPinsEnabled()
+		|| (int(filter.always().size()) <= officialLimit)) {
+		syncedKeys = order;
+	} else {
+		for (const auto &key : order) {
+			if (!localPins.isLocallyPinned(scopeKey, key)) {
+				syncedKeys.push_back(key);
+			}
+		}
+	}
 	session->api().request(MTPmessages_UpdateDialogFilter(
 		MTP_flags(MTPmessages_UpdateDialogFilter::Flag::f_filter),
 		MTP_int(filterId),
-		filter.tl()
-	)).send();
+		cloudTl
+	)).done(crl::guard(session, [=, keys = std::move(syncedKeys)] {
+		for (const auto &key : keys) {
+			session->data().localPins().markCloudSynced(scopeKey, key);
+		}
+	})).send();
 }
 
 void CheckFilterInvite(

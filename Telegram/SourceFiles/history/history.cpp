@@ -2658,7 +2658,7 @@ void History::applyPinnedUpdate(const MTPDupdateDialogPinned &data) {
 			clearFolder();
 		}
 	}
-	owner().setChatPinned(this, FilterId(), data.is_pinned());
+	owner().applyCloudPinUpdate(this, data.is_pinned());
 }
 
 TimeId History::adjustedChatListTimeId() const {

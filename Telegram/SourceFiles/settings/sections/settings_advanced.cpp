@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_channel.h"
 #include "core/update_checker.h"
 #include "data/data_auto_download.h"
+#include "data/data_local_pins.h"
 #include "data/data_session.h"
 #include "export/export_manager.h"
 #include "info/downloads/info_downloads_widget.h"
@@ -292,6 +293,32 @@ void BuildDataStorageSection(SectionBuilder &builder) {
 			u"播放"_q,
 		},
 	});
+
+	const auto unlimitedLocalPins = builder.addButton({
+		.id = u"advanced/unlimited_local_pins"_q,
+		.title = rpl::single(u"Unlimited Local Pinned Chats"_q),
+		.st = &st::settingsButtonNoIcon,
+		.toggled = rpl::single(Data::UnlimitedLocalPinsEnabled()),
+		.keywords = {
+			u"pin"_q,
+			u"pinned"_q,
+			u"unlimited"_q,
+			u"local"_q,
+			u"boost"_q,
+			u"置顶"_q,
+			u"无限制"_q,
+			u"本地"_q,
+		},
+	});
+
+	if (unlimitedLocalPins) {
+		unlimitedLocalPins->toggledValue(
+		) | rpl::filter([](bool checked) {
+			return (checked != Data::UnlimitedLocalPinsEnabled());
+		}) | rpl::on_next([](bool checked) {
+			Data::SetUnlimitedLocalPinsEnabled(checked);
+		}, unlimitedLocalPins->lifetime());
+	}
 
 	builder.addSkip(st::settingsCheckboxesSkip);
 }

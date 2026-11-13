@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_compose_stash.h"
 #include "data/data_histories.h"
+#include "data/data_local_pins.h"
 #include "data/data_user.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
@@ -428,7 +429,8 @@ SavedMessages::ApplyResult SavedMessages::applyReceivedSublists(
 		for (const auto &[peer, holder] : _sublists) {
 			const auto entry = holder.get();
 			if (entry->isPinnedDialog(FilterId())
-				&& !serverPinnedPeers.contains(peer)) {
+				&& !serverPinnedPeers.contains(peer)
+				&& !_owner->localPins().isLocallyPinned(entry)) {
 				if (!entry->parentChat() && !entry->chatListMessage()) {
 					entry->setRestorePinnedWhenNonEmpty(true);
 				}
@@ -436,6 +438,7 @@ SavedMessages::ApplyResult SavedMessages::applyReceivedSublists(
 			}
 			entry->updateChatListExistence();
 		}
+		_owner->restoreLocalPinnedChats(this);
 	} else if (!lastValid) {
 		LOG(("API Error: Unknown message in the end of a slice."));
 		result.allLoaded = true;
@@ -481,6 +484,7 @@ void SavedMessages::apply(const MTPDupdatePinnedSavedDialogs &update) {
 		loadPinned();
 	} else {
 		_chatsList.pinned()->applyList(this, order);
+		_owner->restoreLocalPinnedChats(this);
 		_owner->notifyPinnedDialogsOrderUpdated();
 	}
 }
@@ -493,7 +497,7 @@ void SavedMessages::apply(const MTPDupdateSavedDialogPinned &update) {
 		const auto i = _sublists.find(peer);
 		if (i != end(_sublists)) {
 			const auto entry = i->second.get();
-			_owner->setChatPinned(entry, FilterId(), update.is_pinned());
+			_owner->applyCloudPinUpdate(entry, update.is_pinned());
 		} else {
 			loadPinned();
 		}

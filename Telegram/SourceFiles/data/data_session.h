@@ -75,6 +75,7 @@ class CustomEmojiManager;
 class Stories;
 class SavedMusic;
 class SavedMessages;
+class LocalPinnedChats;
 class Chatbots;
 class BusinessInfo;
 struct ReactionId;
@@ -238,6 +239,9 @@ public:
 	}
 	[[nodiscard]] SavedMessages &savedMessages() const {
 		return *_savedMessages;
+	}
+	[[nodiscard]] LocalPinnedChats &localPins() const {
+		return *_localPins;
 	}
 	[[nodiscard]] Chatbots &chatbots() const {
 		return *_chatbots;
@@ -560,6 +564,11 @@ public:
 		not_null<SavedMessages*> saved) const;
 	void setChatPinned(Dialogs::Key key, FilterId filterId, bool pinned);
 	void setPinnedFromEntryList(Dialogs::Key key, bool pinned);
+	void applyCloudPinUpdate(Dialogs::Key key, bool pinned);
+	void restoreLocalPinnedChats(Folder *folder);
+	void restoreLocalPinnedChats(FilterId filterId);
+	void restoreLocalPinnedChats(not_null<Forum*> forum);
+	void restoreLocalPinnedChats(not_null<SavedMessages*> saved);
 	void clearPinnedChats(Folder *folder);
 	void applyPinnedChats(
 		Folder *folder,
@@ -1441,6 +1450,7 @@ private:
 	const std::unique_ptr<Stories> _stories;
 	const std::unique_ptr<SavedMusic> _savedMusic;
 	const std::unique_ptr<SavedMessages> _savedMessages;
+	const std::unique_ptr<LocalPinnedChats> _localPins;
 	const std::unique_ptr<Chatbots> _chatbots;
 	const std::unique_ptr<BusinessInfo> _businessInfo;
 	std::unique_ptr<ShortcutMessages> _shortcutMessages;

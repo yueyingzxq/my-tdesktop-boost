@@ -188,6 +188,7 @@ void Forum::requestTopics() {
 	)).done([=](const MTPmessages_ForumTopics &result) {
 		const auto previousOffset = _offset;
 		applyReceivedTopics(result, _offset);
+		owner().restoreLocalPinnedChats(this);
 		const auto &list = result.data().vtopics().v;
 		if (list.isEmpty()
 			|| list.size() == result.data().vcount().v
